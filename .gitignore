@@ -1,0 +1,36 @@
+# Secrets
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Data, weights and run outputs (never in Git: small versioned summaries only)
+data/
+checkpoints/
+runs/
+results/raw/
+reports/
+wandb/
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npz
+
+# OS
+.DS_Store
