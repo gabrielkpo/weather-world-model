@@ -6,6 +6,16 @@ repos:
         args: ["--maxkb=10240"]
   - repo: local
     hooks:
+      - id: ruff
+        name: ruff (uv, same version as CI)
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format (uv)
+        entry: uv run ruff format
+        language: system
+        types: [python]
       - id: gitleaks
         name: gitleaks (staged changes)
         # Same version as CI (8.30.1): `brew install gitleaks`
