@@ -86,10 +86,14 @@ SEVIR (public AWS Open Data bucket), NOAA Storm Events (public, NCEI), V-JEPA 2 
 
 ## Development
 
-Requires Python 3.12 and `pre-commit`.
+Requires [uv](https://docs.astral.sh/uv/) (it installs Python 3.12) and `pre-commit`.
 
 ```bash
+uv sync --locked
+uv run ruff check && uv run ruff format --check
+uv run mypy
+uv run pytest
 pre-commit install
 ```
 
-Pull requests use Conventional Commits titles, go through security and code review, and are squash-merged.
+CI runs the same commands. Pull requests use Conventional Commits titles, go through security and code review, and are squash-merged.
