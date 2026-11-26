@@ -8,7 +8,7 @@ Probing what a latent world model has learned about atmospheric physics, by read
 
 ## Why
 
-Latent world models, in the line of JEPA and V-JEPA 2, predict how the world evolves in a space of abstract representations rather than in pixels, and they are starting to reach weather and climate. Most of this work reports forecast quality. A complementary question is what such a model has actually learned about the physics. Probes and surprise on physically impossible events are already well studied; this project looks at other properties of the latent space:
+Latent world models, in the line of JEPA and V-JEPA 2, predict how the world evolves in a space of abstract representations rather than in pixels, and they are starting to reach weather and climate. Most work reports forecast quality; a complementary question is what such a model has learned about the physics. Probes and surprise on impossible events are well studied; this project examines other properties of the latent space:
 
 - **Predictability**: do nearby latent trajectories diverge the way chaotic weather does? AI weather models are known to reproduce fast initial error growth poorly.
 - **Arrow of time**: does the latent space encode that atmospheric evolution is irreversible?
@@ -40,9 +40,30 @@ flowchart LR
 2. **Wind world.** A two-layer quasi-geostrophic atmosphere (a baroclinic jet with cyclones and anticyclones) gives a 2D world whose physics is fully known. World models are trained on it, with a one-step and a multi-step latent loss, and their latent space is read against the simulator's exact energy, jet speed and vortices.
 3. **Real weather.** V-JEPA 2 (MIT) is adapted to SEVIR radar videos of real storms with its own self-supervised objective, and the same diagnostics are confronted with severe storms reported in NOAA Storm Events.
 
+### The model and how it is examined
+
+![Training and evaluation of the latent world model](docs/assets/architecture.svg)
+
+The figure shows the stochastic variant; the deterministic model has no noise input and makes a single prediction.
+
+| Term | Meaning |
+|---|---|
+| `t`, `t+1` | Wind maps at two consecutive instants. |
+| Encoder | A convolutional network that compresses a map into `z`. |
+| `z` | The latent state, 32 numbers. |
+| Target encoder | A slow copy of the encoder that provides the training target; it is never updated by gradients. |
+| Predictor | Advances `z` by one time step; the only part that moves time forward. |
+| Noise 1, Noise 2 | Random vectors; different draws give different possible futures. |
+| `z1`, `z2` | Two possible latent states at `t+1`. |
+| Training loss | How close `z1` and `z2` are to the target, minus half the distance between them (energy score); it updates the encoder and the predictor. |
+| Probe | A linear formula fitted after training, on the frozen model, that reads a physical quantity from `z`. |
+| `E1`, `E2` | The energy read by the probe in each scenario. |
+| True energy | Computed by the simulator on the true map at `t+1`; the model never sees it during training. |
+| Evaluation | Compares the mean probe reading with the true energy (R²). |
+
 Technical choices and their trade-offs:
 
-- **A pretrained world model rather than training a large one,** because three weeks on a free GPU cannot match V-JEPA 2's pretraining; the cost is a domain gap (natural RGB video vs physical fields), measured by a small model trained from scratch.
+- **A pretrained world model rather than training a large one,** because three weeks on a free GPU cannot match V-JEPA 2's pretraining; the cost is a domain gap (natural RGB video vs physical fields), measured with a small model.
 - **Two simulated worlds before real data,** because real weather has no ground-truth Lyapunov exponent or energy budget; the cost is time spent before the radar.
 - **Linear readouts,** because a linear probe shows what the latent makes explicit; the cost is missing information stored nonlinearly.
 
@@ -58,7 +79,7 @@ The full protocol, frozen before any measurement and amended only through dated 
 | 2 | The arrow of time is readable, and pretraining helps | probe > 80 %; V-JEPA 2 ≥ 0.05 above the small JEPA |
 | 3 | Severe storms are less predictable in latent space | shorter horizon than ordinary storms, Mann-Whitney p < 0.05 |
 
-Splits are by run or by date, tuning uses the validation split only, and every number comes from a versioned run record under `results/`. Negative results are reported.
+Splits are by run or by date, tuning uses the validation split only, every number comes from a versioned run record, and negative results are reported.
 
 ## Results so far
 
@@ -84,7 +105,7 @@ The diagnostic code recovers the known answers; the small world model keeps the 
 
 ## Run it
 
-Requires [uv](https://docs.astral.sh/uv/). The calibration runs on a laptop CPU in about two minutes and downloads nothing beyond the Python dependencies.
+Requires [uv](https://docs.astral.sh/uv/). The calibration runs on a laptop CPU in about two minutes and downloads only Python dependencies.
 
 ```bash
 git clone https://github.com/gabrielkpo/weather-world-model.git && cd weather-world-model
@@ -92,7 +113,7 @@ uv sync --locked
 uv run python -m weather_world_model.calibration.run --profile full --out results/calibration
 ```
 
-The run writes `results/calibration/calibration-full.json` and prints the verdicts.
+It writes `results/calibration/calibration-full.json` and prints the verdicts.
 
 ## Project structure
 
