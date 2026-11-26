@@ -1,11 +1,19 @@
 """Diagnostic C: arrow of time read by a linear probe.
 
-Features are the concatenated consecutive differences ``z_{t+1} - z_t`` of a sequence,
-shape ``((T-1) * d,)``. Differences remove the static content of a clip, which is identical
-in both directions, and keep what changes with the direction of time.
+Two feature sets are available:
+
+- ``"differences"``: the concatenated consecutive differences ``z_{t+1} - z_t``, shape
+  ``((T-1) * d,)``. They suit processes with a systematic drift (decay to a fixed point).
+- ``"asymmetry"``: clip averages of statistics that change sign exactly under time reversal,
+  the antisymmetric lag-one covariance ``z_t^i z_{t+1}^j - z_{t+1}^i z_t^j`` (``i < j``) and the
+  third-order asymmetry ``z_t^i**2 z_{t+1}^i - z_t^i z_{t+1}^i**2``. A linear probe on raw
+  sequences or differences cannot separate the two directions of a statistically
+  stationary process (both directions have the same mean), while these statistics can
+  when the dynamics are irreversible.
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import torch
@@ -14,9 +22,25 @@ from torch import Tensor, nn
 
 from weather_world_model.seeding import seed_everything
 
+FeatureSet = Literal["differences", "asymmetry"]
+
+
+def time_asymmetry_features(sequences: NDArray[np.floating]) -> NDArray[np.float64]:
+    """Clip statistics that flip sign under time reversal; ``(N, T, d) -> (N, d(d-1)/2 + d)``."""
+    seqs = np.asarray(sequences, dtype=np.float64)
+    a, b = seqs[:, :-1], seqs[:, 1:]
+    lag = np.einsum("nti,ntj->nij", a, b) / a.shape[1]
+    iu = np.triu_indices(seqs.shape[2], k=1)
+    antisym = (lag - lag.transpose(0, 2, 1))[:, iu[0], iu[1]]
+    third = np.mean(a**2 * b - a * b**2, axis=1)
+    return np.concatenate([antisym, third], axis=1)
+
 
 def arrow_of_time_dataset(
-    latent_sequences: NDArray[np.floating], rng: np.random.Generator
+    latent_sequences: NDArray[np.floating],
+    rng: np.random.Generator,
+    *,
+    features: FeatureSet = "differences",
 ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
     """Reverse each ``(T, d)`` sequence with probability 1/2; label 1 = forward, 0 = reversed."""
     seqs = np.asarray(latent_sequences, dtype=np.float64)
@@ -24,8 +48,9 @@ def arrow_of_time_dataset(
         raise ValueError(f"expected (N, T>=2, d), got {seqs.shape}")
     labels = rng.integers(0, 2, size=seqs.shape[0]).astype(np.int64)
     oriented = np.where(labels[:, None, None] == 1, seqs, seqs[:, ::-1])
-    features = np.diff(oriented, axis=1).reshape(seqs.shape[0], -1)
-    return features, labels
+    if features == "asymmetry":
+        return time_asymmetry_features(oriented), labels
+    return np.diff(oriented, axis=1).reshape(seqs.shape[0], -1), labels
 
 
 @dataclass
