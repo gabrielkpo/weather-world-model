@@ -1,8 +1,8 @@
 # Results
 
-Every number below is read from a versioned run record. Hypotheses are those of [PROTOCOL.md](PROTOCOL.md), including amendment 1.
+Every number below is read from a versioned run record. Hypotheses are those of [PROTOCOL.md](PROTOCOL.md), including its amendments.
 
-## Step 2: calibration on simulated systems
+## Step 1: Lorenz-96 proof of concept
 
 Run record: [`results/calibration/calibration-full.json`](../results/calibration/calibration-full.json) (code commit `b183320`, profile `full`, seeds 0, 1, 2, CPU). Reproduce with:
 
@@ -35,6 +35,32 @@ H0-A is not supported, so, as written in the protocol, diagnostic A is not appli
 
 Decision (2026-11-26, protocol amendment 2): option 2 is taken. Every later model is trained with both a one-step and a multi-step latent rollout loss, the multi-step model is rerun on Lorenz-96, and diagnostic B is withdrawn.
 
+### Stochastic predictor (hypothesis L-S, protocol amendment 3)
+
+Run record: [`results/calibration/calibration-stochastic.json`](../results/calibration/calibration-stochastic.json) (code commit `0907742`, profile `full`, seeds 0, 1, 2, CPU). Reproduce with:
+
+```bash
+uv run python -m weather_world_model.calibration.run --profile full --stochastic --out results/calibration
+```
+
+Per seed, two models are trained on the same Lorenz-96 data for the same 4 000 steps: the deterministic one-step JEPA of H0-A (its values in this record are identical to those of the calibration record) and a stochastic variant whose predictor also receives a noise vector of dimension 8 and is trained with the two-sample energy score. No run collapsed (final latent std 0.99 to 1.02). The stochastic model is measured in two ways: sensitivity (clean and perturbed rollouts driven by the same noise sequence, ε = 1e-3, growth-window rule of diagnostic A), which decides L-S, and ensemble spread (8 rollouts from the same state with independent noise, mean distance between pairs of members, same normalisation), which is reported.
+
+| Seed | Lyapunov reference | Deterministic growth rate | Stochastic sensitivity growth rate | Stochastic relative error |
+|---|---|---|---|---|
+| 0 | 1.69 | 0.12 | −0.26 | 1.15 |
+| 1 | 1.68 | −0.03 | −0.19 | 1.11 |
+| 2 | 1.70 | 0.13 | −0.15 | 1.09 |
+
+Rates are per time unit. **L-S is not supported**: the criterion asks for a sensitivity growth rate within 30 % of the Lyapunov exponent and closer to it than the deterministic model; the stochastic rate is negative on every seed and further from the reference than the deterministic one (relative error 1.09 to 1.15 against 0.93 to 1.02). At ε = 1e-2 the sensitivity rates are the same (−0.27 to −0.16).
+
+Ensemble spread, as a fraction of the saturation distance (range over seeds): 0.20 to 0.21 after one step, 0.28 after two, 0.55 to 0.57 after 10 steps (0.5 time units), 0.81 to 0.90 after 40 steps, 0.96 to 1.11 after 120 steps. The spread passes the 0.3 ceiling of the growth-window rule at the third step, so the fitted rate (6.4 to 6.7 per time unit) rests on two points and is not an exponential growth rate.
+
+#### What this says
+
+- **Noise does not make the predictor sensitive to its initial state.** With the noise sequence held fixed, two rollouts started 0.1 % apart come closer over time, slightly faster than with the deterministic model: the stochastic predictor is still a contraction in its latent argument. A proper score for the next-step distribution does not, by itself, teach the map to amplify small differences.
+- **The model does produce diverse futures, but through the noise, not through chaos.** Members of an ensemble started from the same state are a fifth of the saturation distance apart after a single step and reach the saturation distance after 2.5 to 6 time units. The true system needs about 4 time units to bring a 0.1 % perturbation to half of saturation, starting slowly and accelerating; the model's spread jumps at the first step and then grows ever more slowly. The uncertainty is injected at each step rather than grown from the initial error.
+- **Consequence.** Neither the deterministic nor the stochastic one-step model reproduces chaotic error growth on Lorenz-96. The stochastic variant is still measured on the QG world (W-S), as planned.
+
 ## Step 2: quasi-geostrophic world
 
 Run record: [`results/qg/qg-full.json`](../results/qg/qg-full.json) (code commit `e18950d`, profile `full`, seeds 0, 1, 2, CPU, 1 h 49 min wall time). Reproduce with:
@@ -43,7 +69,7 @@ Run record: [`results/qg/qg-full.json`](../results/qg/qg-full.json) (code commit
 uv run python -m weather_world_model.worlds.run_qg --profile full --out results/qg
 ```
 
-Hypotheses W-A, W-C and W-P of protocol amendment 2. W-V needs a GPU and is not measured here; W-R, L-S and W-S (amendment 3) are measured in a later run.
+Hypotheses W-A, W-C and W-P of protocol amendment 2. W-V needs a GPU and is not measured here; L-S (amendment 3) is reported in step 1 above; W-R and W-S (amendment 3) are measured in a later run.
 
 Setup: 80 independent runs of the two-layer QG model, split by run 56 / 12 / 12 (train / validation / test), 100 snapshots per run every 0.1 time units after a spin-up of 4 000 steps, field = upper-layer eddy winds `u, v` (2 × 64 × 64), standardised per channel with training statistics. Per seed, the convolutional JEPA (channels 32-64-96-128, latent dimension 32, batch 64, 3 000 steps) is trained with a one-step loss (k = 1) and with an 8-step latent rollout loss (k = 8) on the same data; the same encoder with random weights is the W-P control. No model collapsed (final latent std 0.98 to 1.04).
 
