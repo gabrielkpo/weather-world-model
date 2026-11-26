@@ -158,7 +158,7 @@ The stochastic models are also scored on W-C, W-P and W-R, reported without thre
 
 ### 4. 2026-11-26, after an exploratory analysis of the arrow-of-time probe
 
-An exploratory analysis on true QG fields only, with no model involved (`scripts/explore_arrow_probe.py`, record `results/exploratory/arrow-probe-qg.json`), showed what the probe of diagnostic C detects. Against plain time reversal it reaches 90 % (8 PCA components, clips of 16 snapshots) to 100 % (32 components, clips of 64) on 1 116 test clips. When the reversed clip is also mirrored in x with the sign of v flipped, a transformation under which the inviscid QG equations are invariant and which therefore keeps the direction of wave propagation, the same probe falls to chance (46 to 52 %). With its current features, the probe reads the direction in which waves propagate, not physical irreversibility.
+An exploratory analysis on true QG fields only, with no model involved (`scripts/explore_arrow_probe.py`, record `results/exploratory/arrow-probe-qg.json`), showed what the probe of diagnostic C detects. Against plain time reversal it reaches 90 % (8 PCA components, clips of 16 snapshots) to 100 % (32 components, clips of 64) on 1 116 test clips. When the reversed clip is also mirrored in x with the sign of v flipped, a transformation under which the inviscid QG equations are invariant and which therefore keeps the direction of wave propagation, the same probe falls to chance (43 to 55 % across the 16 settings of the record). With its current features, the probe reads the direction in which waves propagate, not physical irreversibility.
 
 Changes:
 

@@ -107,6 +107,6 @@ Not a protocol result. Record: [`results/exploratory/arrow-probe-qg.json`](../re
 | 32, 16 | 1 116 | 98.7 % | 47.0 % |
 | 32, 64 | 252 | 100 % | 45.8 % |
 
-- **The probe reads the direction of wave propagation, not irreversibility.** Keeping more components or longer clips lifts it from 90 % to 100 % against plain reversal, but it is at chance once the reversed clip is mirrored in x (with v changing sign), which keeps the direction in which waves travel. The W-C numbers above therefore say that the latents keep the propagation direction, and nothing about irreversibility.
+- **The probe reads the direction of wave propagation, not irreversibility.** Keeping more components or longer clips lifts it from 90 % to 100 % against plain reversal, but it is at chance (43 to 55 % across the 16 settings of the record) once the reversed clip is mirrored in x (with v changing sign), which keeps the direction in which waves travel. The W-C numbers above therefore say that the latents keep the propagation direction, and nothing about irreversibility.
 - **The first run's 76.5 % ceiling is not explained.** With the protocol's sizes (56 training runs, 100 snapshots, 132 test clips) this analysis gives 86.9 % on true fields. The difference with the first run is to be traced (protocol amendment 4).
 - A diagnostic aimed at true irreversibility is to be defined in a later amendment.
