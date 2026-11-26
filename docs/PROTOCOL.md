@@ -107,3 +107,30 @@ Operational forecasting or warning, image generation, agents and planning, addit
 - **Diagnostic C features for frame-level encoders.** The calibration JEPA encodes one frame at a time, so a clip has no single latent. A linear probe on raw latent sequences or on their differences cannot separate the two time directions of a statistically stationary process (both directions have the same mean). Clip features for frame-level encoders are therefore the clip averages of statistics that change sign exactly under time reversal: the antisymmetric lag-one covariance `z_t^i z_{t+1}^j - z_{t+1}^i z_t^j` (`i < j`) and the third-order asymmetry `z_t^i² z_{t+1}^i - z_t^i z_{t+1}^i²`, after a PCA to 8 dimensions fitted on the training clips. The difference features are reported alongside for transparency. Clip-level encoders (V-JEPA 2) keep the protocol as written.
 - **Diagnostic A growth window in calibration.** Steps 1 to the last step before the normalised separation reaches 0.3 (a fixed rule replaces the validation-tuned window on simulated data).
 - **Oracle baselines.** Each calibration also runs the diagnostic on the true system (identity encoder and true dynamics), to separate errors of the diagnostic code from errors of the learned model. Only the JEPA values decide H0.
+
+### 2. 2026-11-26, after the calibration and before any run on the new world
+
+Decision, after the calibration results: the project proceeds in three steps of increasing realism.
+
+1. **Lorenz-96, proof of concept** (done): the diagnostics recover known answers.
+2. **A two-layer quasi-geostrophic (QG) atmosphere**, a 2D "wind map" world whose physics is fully known, simulated locally (64 × 64, doubly periodic, baroclinic jet with cyclones and anticyclones).
+3. **SEVIR radar**, as in section 3.2, if time allows before the release; otherwise reported as not done.
+
+Changes:
+
+- **Diagnostic B (growth and decay modes) is withdrawn.** Its calibration record stays in the results; H3 is dropped.
+- **Training objective.** Every JEPA in steps 2 and 3 is trained twice, with a one-step loss and with a multi-step latent rollout loss (k = 8 steps, autoregressive in latent space against EMA-target latents), because the one-step model contracted on Lorenz-96. The multi-step model is also rerun on Lorenz-96 and reported.
+- **Readouts (new).** Ridge-regression probes from frozen frame latents to physical quantities computed exactly by the simulator: kinetic energy, available potential energy, enstrophy, maximum zonal-mean jet speed, maximum cyclonic and anticyclonic vorticity, and the number of coherent vortices. Probes are fitted on training trajectories, regularisation chosen on validation trajectories, scored once on test trajectories (R²). Control: the same encoder architecture with random weights.
+- **QG data.** Independent simulator runs, split by run: 70 % train, 15 % validation, 15 % test. Snapshots are taken after spin-up. The predictability ground truth is the simulator's own twin divergence (same perturbation, same normalisation rule as diagnostic A).
+- **Models on the QG world:** the small JEPA with a convolutional encoder (one-step and multi-step), and V-JEPA 2 (frozen, then adapted) on the upper-layer wind speed rendered as video, when a GPU session is available.
+
+Hypotheses for step 2, stated before any run:
+
+| ID | Hypothesis | Criterion |
+|---|---|---|
+| W-A | Multi-step training restores chaotic error growth | latent growth rate of the multi-step model within 30 % of the simulator's twin-divergence growth rate, and closer to it than the one-step model |
+| W-C | The arrow of time is linearly readable on the QG world | probe accuracy > 80 % (asymmetry features, amendment 1) |
+| W-P | Physical quantities are linearly readable from the latent | test R² ≥ 0.7 for kinetic energy, available potential energy, enstrophy and jet speed, and ≥ 0.1 above the random-weight control; vortex count and vorticity extremes are reported without a threshold |
+| W-V | Pretraining on natural video helps on the QG world | V-JEPA 2 beats the small JEPA trained from scratch on W-C accuracy and on mean W-P R² by ≥ 0.05 |
+
+Radar hypotheses H1, H2, H4 and H5 are unchanged.
