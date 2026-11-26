@@ -1,5 +1,7 @@
 # weather-world-model
 
+[![CI](https://github.com/gabrielkpo/weather-world-model/actions/workflows/ci.yml/badge.svg)](https://github.com/gabrielkpo/weather-world-model/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Probing what a latent world model has learned about storm dynamics, with dynamical-systems diagnostics instead of forecast scores alone.
 
 > **Status:** step 1 of 5, protocol written, no code yet. See the [roadmap](#status-and-roadmap). Expect breaking changes.
@@ -97,3 +99,7 @@ pre-commit install
 ```
 
 CI runs the same commands. Pull requests use Conventional Commits titles, go through security and code review, and are squash-merged.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Data and model weights keep their own licences (see [Data](#data)).
