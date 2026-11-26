@@ -16,7 +16,7 @@ import argparse
 import base64
 import json
 import math
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,6 +42,7 @@ from weather_world_model.worlds.run_qg import (
     PROFILES,
     TORCH_THREADS,
     QGData,
+    _plain,
     log,
     simulate,
     train_or_load,
@@ -158,9 +159,13 @@ def load_models(
         if not path.exists():
             raise FileNotFoundError(f"{path} is missing: run run_qg --amendment3 first")
         cfg = replace(base, rollout_steps=k, noise_dim=noise_dim)
-        model, info = train_or_load(cfg, data, profile, seed, name, path)
-        if not info.get("from_checkpoint"):
+        # Check before train_or_load, which would retrain and overwrite a mismatched file.
+        saved = torch.load(path, weights_only=True)
+        expected = {"config": asdict(cfg), "profile": asdict(profile), "seed": seed}
+        if any(saved.get(key) != _plain(value) for key, value in expected.items()):
             raise RuntimeError(f"{path} does not match the run's configuration")
+        del saved
+        model, _ = train_or_load(cfg, data, profile, seed, name, path)
         lat = {s: encode_numpy(model, f, batch_size=256) for s, f in data.frames.items()}
         flat = {s: v.reshape(-1, v.shape[-1]) for s, v in lat.items()}
         probes = fit_readout_probes(flat, flat_diags, DIAGNOSTIC_NAMES)
