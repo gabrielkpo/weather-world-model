@@ -8,6 +8,13 @@ layer eddy winds, ``(2, 64, 64)``), snapshots after spin-up, standardised per ch
 train statistics. Models per seed: the conv JEPA trained with a one-step loss (k = 1) and
 with an 8-step rollout loss (k = 8) on the same data for the same number of steps, and the
 same encoder with random weights (control for W-P).
+
+With ``--amendment3`` the run measures protocol amendment 3 and writes
+``qg-amendment3[-<profile>].json``: the k = 1 and k = 8 models are retrained with the same
+configuration and seeds, a stochastic one-step model (noise dimension 8, energy score) is
+added, and every model also gets rollout readouts (W-R); the stochastic model's sensitivity
+to initial conditions under a shared noise sequence decides W-S. Trained weights are saved
+under ``--checkpoints`` (ignored by Git) and reused by a restarted run.
 """
 
 from __future__ import annotations
@@ -18,7 +25,7 @@ import json
 import resource
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -34,11 +41,13 @@ from weather_world_model.diagnostics.arrow import (
     train_probe,
 )
 from weather_world_model.diagnostics.predictability import (
+    ensemble_spread_curve,
     growth_rate,
     normalised,
     saturation_distance,
     separation_curve,
 )
+from weather_world_model.diagnostics.readouts import fit_readout_probes, rollout_readouts
 from weather_world_model.jepa import JEPAConfig, SequenceJEPA, encode_numpy, train_jepa
 from weather_world_model.seeding import seed_everything
 from weather_world_model.worlds.qg import (
@@ -52,10 +61,15 @@ from weather_world_model.worlds.qg import (
 
 FloatArray = NDArray[np.float64]
 EPSILONS = (1e-3, 1e-2)
-RIDGE_ALPHAS = (1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0, 1000.0)
 THRESHOLDED = ("kinetic_energy", "available_potential_energy", "enstrophy", "jet_speed_max")
 CURVE_POINTS = 40  # curves are stored subsampled to keep the record small
 TORCH_THREADS = 4
+NOISE_DIM = 8  # noise dimension of the stochastic predictor (protocol amendment 3)
+HORIZONS = (1, 5, 10)  # rollout-readout horizons, in snapshots (W-R)
+READOUT_SAMPLES = 8  # sampled rollouts averaged for the readouts of a stochastic model
+ENSEMBLE_MEMBERS = 8  # members of the ensemble whose spread is reported
+BASE_MODELS: tuple[tuple[str, int, int], ...] = (("k1", 1, 0), ("k8", 8, 0))
+AMENDMENT3_MODELS = (*BASE_MODELS, ("stoch", 1, NOISE_DIM))  # (name, rollout_steps, noise_dim)
 
 
 def log(message: str) -> None:
@@ -227,15 +241,34 @@ def true_predictability(data: QGData, profile: Profile, seed: int) -> dict[str, 
 def latent_predictability(
     model: SequenceJEPA, data: QGData, profile: Profile, seed: int
 ) -> dict[str, Any]:
-    """Latent separation of perturbed start frames under the model's own rollout."""
+    """Latent separation of perturbed start frames under the model's own rollout.
+
+    For a stochastic model the clean and perturbed rollouts are driven by the same noise
+    sequence (sensitivity to initial conditions), and the spread of an ensemble started from
+    the clean latents with independent noise is added under ``"spread"``.
+    """
     rng = np.random.default_rng(seed)
     shape = model.config.frame_shape
+    stochastic = model.config.noise_dim > 0
+    generator = torch.Generator().manual_seed(seed)
+    shared = (
+        torch.randn(
+            (len(data.start_frames), profile.separation_k, model.config.noise_dim),
+            generator=generator,
+        )
+        if stochastic
+        else None
+    )
 
     def encode(x: FloatArray) -> FloatArray:
         return encode_numpy(model, x.reshape(-1, *shape))
 
     def rollout(z0: FloatArray, k: int) -> FloatArray:
-        out = model.rollout(torch.as_tensor(z0, dtype=torch.float32), k)
+        out = model.rollout(torch.as_tensor(z0, dtype=torch.float32), k, noise=shared)
+        return np.asarray(out.numpy(), dtype=np.float64)
+
+    def sampled_rollout(z0: FloatArray, k: int) -> FloatArray:
+        out = model.rollout(torch.as_tensor(z0, dtype=torch.float32), k, generator=generator)
         return np.asarray(out.numpy(), dtype=np.float64)
 
     test_latents = encode_numpy(model, data.frames["test"]).reshape(-1, model.config.latent_dim)
@@ -247,6 +280,12 @@ def latent_predictability(
             encode, rollout, flat, epsilon=eps, k=profile.separation_k, rng=rng
         )
         result[f"eps{eps:g}"] = _growth(curve, saturation, data.sample_dt)
+    if stochastic:
+        result["noise"] = "same noise sequence for the clean and the perturbed rollout"
+        spread = ensemble_spread_curve(
+            sampled_rollout, encode(flat), k=profile.separation_k, n_members=ENSEMBLE_MEMBERS
+        )
+        result["spread"] = _growth(spread, saturation, data.sample_dt)
     return result
 
 
@@ -278,51 +317,6 @@ def arrow_probe(
     return probe_accuracy(probe, x_te, y_te)
 
 
-# --------------------------------------------------------------------- W-P
-def _ridge(x: FloatArray, y: FloatArray, alpha: float) -> FloatArray:
-    xb = np.hstack([x, np.ones((x.shape[0], 1))])
-    reg = alpha * np.eye(xb.shape[1])
-    reg[-1, -1] = 0.0  # no penalty on the intercept
-    return np.asarray(np.linalg.solve(xb.T @ xb + reg, xb.T @ y), dtype=np.float64)
-
-
-def _predict(x: FloatArray, w: FloatArray) -> FloatArray:
-    return np.asarray(np.hstack([x, np.ones((x.shape[0], 1))]) @ w, dtype=np.float64)
-
-
-def r2_score(y: FloatArray, pred: FloatArray) -> float:
-    """Coefficient of determination of one target."""
-    ss_res = float(np.sum((y - pred) ** 2))
-    ss_tot = float(np.sum((y - y.mean()) ** 2))
-    return 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
-
-
-def readout_probes(latents: dict[str, FloatArray], diags: dict[str, FloatArray]) -> dict[str, Any]:
-    """Ridge probe per quantity; alpha chosen on val R², scored once on test."""
-    z_mean = latents["train"].mean(axis=0)
-    z_std = latents["train"].std(axis=0)
-    z_std[z_std == 0] = 1.0
-    y_mean = diags["train"].mean(axis=0)
-    y_std = diags["train"].std(axis=0)
-    y_std[y_std == 0] = 1.0
-    x = {k: (v - z_mean) / z_std for k, v in latents.items()}
-    y = {k: (v - y_mean) / y_std for k, v in diags.items()}
-    out: dict[str, Any] = {}
-    for q, name in enumerate(DIAGNOSTIC_NAMES):
-        val_r2 = [
-            r2_score(y["val"][:, q], _predict(x["val"], _ridge(x["train"], y["train"][:, q], a)))
-            for a in RIDGE_ALPHAS
-        ]
-        best = RIDGE_ALPHAS[int(np.nanargmax(val_r2))]
-        w = _ridge(x["train"], y["train"][:, q], best)
-        out[name] = {
-            "alpha": best,
-            "val_r2": float(np.nanmax(val_r2)),
-            "test_r2": r2_score(y["test"][:, q], _predict(x["test"], w)),
-        }
-    return out
-
-
 # --------------------------------------------------------------------- per seed
 def _latents(model: SequenceJEPA, data: QGData) -> dict[str, FloatArray]:
     return {k: encode_numpy(model, v, batch_size=256) for k, v in data.frames.items()}
@@ -333,62 +327,134 @@ def _flat(seqs: dict[str, FloatArray]) -> dict[str, FloatArray]:
 
 
 def evaluate_model(
-    model: SequenceJEPA, data: QGData, profile: Profile, seed: int, *, dynamics: bool
+    model: SequenceJEPA,
+    data: QGData,
+    profile: Profile,
+    seed: int,
+    *,
+    dynamics: bool,
+    rollouts: bool = False,
 ) -> dict[str, Any]:
-    """W-P readouts for any encoder; W-A and W-C for trained models (``dynamics``)."""
+    """W-P readouts for any encoder; W-A and W-C for trained models (``dynamics``); W-R
+    rollout readouts with ``rollouts`` (mean of ``READOUT_SAMPLES`` sampled rollouts for a
+    stochastic model)."""
     lat = _latents(model, data)
+    probes = fit_readout_probes(
+        _flat(lat), {k: v.reshape(-1, v.shape[-1]) for k, v in data.diags.items()}, DIAGNOSTIC_NAMES
+    )
     result: dict[str, Any] = {
-        "readouts": readout_probes(
-            _flat(lat), {k: v.reshape(-1, v.shape[-1]) for k, v in data.diags.items()}
-        ),
+        "readouts": probes.scores,
         "test_latent_std": float(lat["test"].reshape(-1, lat["test"].shape[-1]).std(axis=0).mean()),
     }
     if dynamics:
         result["predictability"] = latent_predictability(model, data, profile, seed)
         result["arrow_accuracy"] = arrow_probe(lat["train"], lat["test"], profile, seed)
+    if rollouts:
+        generator = torch.Generator().manual_seed(seed)
+
+        def rollout(z0: FloatArray, k: int) -> FloatArray:
+            out = model.rollout(torch.as_tensor(z0, dtype=torch.float32), k, generator=generator)
+            return np.asarray(out.numpy(), dtype=np.float64)
+
+        n_samples = READOUT_SAMPLES if model.config.noise_dim > 0 else 1
+        result["rollout_readouts"] = {
+            "n_sampled_rollouts": n_samples,
+            **rollout_readouts(
+                probes,
+                rollout,
+                lat["test"],
+                data.diags["test"],
+                horizons=HORIZONS,
+                n_samples=n_samples,
+            ),
+        }
     return result
 
 
-def run_seed(data: QGData, profile: Profile, seed: int) -> dict[str, Any]:
-    """Train k = 1 and k = 8 models, build the random-weight control, evaluate all three."""
+def _plain(value: Any) -> Any:
+    """JSON round trip, so that tuples compare equal to the lists read back from disk."""
+    return json.loads(json.dumps(value))
+
+
+def train_or_load(
+    cfg: JEPAConfig, data: QGData, profile: Profile, seed: int, name: str, checkpoint: Path | None
+) -> tuple[SequenceJEPA, dict[str, Any]]:
+    """Train one model, or load it from ``checkpoint`` if that file holds the same
+    configuration, profile and seed. A freshly trained model is saved there."""
+    meta = {"config": _plain(asdict(cfg)), "profile": _plain(asdict(profile)), "seed": seed}
+    if checkpoint is not None and checkpoint.exists():
+        saved = torch.load(checkpoint, weights_only=True)
+        if all(saved.get(k) == v for k, v in meta.items()):
+            model = SequenceJEPA(cfg)
+            model.load_state_dict(saved["state_dict"])
+            log(f"seed {seed} {name} loaded from {checkpoint}")
+            return model, {**saved["info"], "from_checkpoint": True}
+        log(f"seed {seed} {name}: {checkpoint} has another configuration, retraining")
+    t0 = time.perf_counter()
+
+    def progress(step: int, loss: float, std: float) -> None:
+        done = step + 1
+        elapsed = time.perf_counter() - t0
+        eta = elapsed / done * (profile.train_steps - done)
+        log(
+            f"seed {seed} {name} step {done}/{profile.train_steps} loss {loss:.4f} "
+            f"latent_std {std:.3f} elapsed {elapsed:.0f}s eta {eta:.0f}s"
+        )
+
+    model, history = train_jepa(
+        data.frames["train"], cfg, n_steps=profile.train_steps, seed=seed, progress=progress
+    )
+    train_s = time.perf_counter() - t0
+    info: dict[str, Any] = {
+        "train_seconds": train_s,
+        "seconds_per_step": train_s / max(1, profile.train_steps),
+        "final_latent_std": history.latent_std[-1],
+        "collapsed": history.collapsed,
+        "loss_subsampled": _subsample(np.asarray(history.loss)),
+    }
+    if checkpoint is not None:
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        tmp = checkpoint.with_suffix(".tmp")
+        torch.save({**meta, "info": info, "state_dict": model.state_dict()}, tmp)
+        tmp.replace(checkpoint)
+        log(f"seed {seed} {name} saved to {checkpoint}")
+    return model, info
+
+
+def run_seed(
+    data: QGData,
+    profile: Profile,
+    seed: int,
+    *,
+    amendment3: bool = False,
+    checkpoints: Path | None = None,
+) -> dict[str, Any]:
+    """Train k = 1 and k = 8 models, build the random-weight control, evaluate all three.
+
+    With ``amendment3`` a stochastic one-step model is trained as well and every trained
+    model also gets rollout readouts.
+    """
     out: dict[str, Any] = {"seed": seed}
-    for name, k in (("k1", 1), ("k8", 8)):
-        cfg = JEPAConfig(
-            encoder="conv",
-            input_shape=(2, *data.frames["train"].shape[-2:]),
-            rollout_steps=k,
-            batch_size=profile.batch_size,
-            conv_channels=profile.conv_channels,
-            log_every=max(1, profile.train_steps // 50),
-        )
-        t0 = time.perf_counter()
-
-        def progress(step: int, loss: float, std: float, name: str = name, t0: float = t0) -> None:
-            done = step + 1
-            elapsed = time.perf_counter() - t0
-            eta = elapsed / done * (profile.train_steps - done)
-            log(
-                f"seed {seed} {name} step {done}/{profile.train_steps} loss {loss:.4f} "
-                f"latent_std {std:.3f} elapsed {elapsed:.0f}s eta {eta:.0f}s"
-            )
-
-        model, history = train_jepa(
-            data.frames["train"], cfg, n_steps=profile.train_steps, seed=seed, progress=progress
-        )
-        train_s = time.perf_counter() - t0
+    base = JEPAConfig(
+        encoder="conv",
+        input_shape=(2, *data.frames["train"].shape[-2:]),
+        batch_size=profile.batch_size,
+        conv_channels=profile.conv_channels,
+        log_every=max(1, profile.train_steps // 50),
+    )
+    for name, k, noise_dim in AMENDMENT3_MODELS if amendment3 else BASE_MODELS:
+        cfg = replace(base, rollout_steps=k, noise_dim=noise_dim)
+        path = checkpoints / f"seed{seed}-{name}.pt" if checkpoints is not None else None
+        model, info = train_or_load(cfg, data, profile, seed, name, path)
         out[name] = {
-            "train_seconds": train_s,
-            "seconds_per_step": train_s / max(1, profile.train_steps),
-            "final_latent_std": history.latent_std[-1],
-            "collapsed": history.collapsed,
-            "loss_subsampled": _subsample(np.asarray(history.loss)),
-            **evaluate_model(model, data, profile, seed, dynamics=True),
+            **info,
+            **evaluate_model(model, data, profile, seed, dynamics=True, rollouts=amendment3),
         }
         log(f"seed {seed} {name} evaluated, peak RSS {peak_rss_mb():.0f} MB")
-        del model, history
+        del model
         gc.collect()
     seed_everything(seed)
-    random_model = SequenceJEPA(cfg)  # same architecture as the trained models, untrained
+    random_model = SequenceJEPA(base)  # same architecture as the trained models, untrained
     out["random"] = evaluate_model(random_model, data, profile, seed, dynamics=False)
     out["peak_rss_mb"] = peak_rss_mb()
     return out
@@ -455,12 +521,96 @@ def verdicts(truth: dict[str, Any], seeds: list[dict[str, Any]]) -> dict[str, An
     }
 
 
-def run(profile_name: str, partial: Path | None = None) -> dict[str, Any]:
+def _gain(readouts: dict[str, Any], horizon: int) -> float:
+    """Mean over the thresholded quantities of rollout R² minus persistence R²."""
+    at_h = readouts[f"h{horizon}"]
+    return float(np.mean([at_h[q]["rollout_r2"] - at_h[q]["persistence_r2"] for q in THRESHOLDED]))
+
+
+def verdicts_amendment3(truth: dict[str, Any], seeds: list[dict[str, Any]]) -> dict[str, Any]:
+    """Apply the criteria of protocol amendment 3 to the per-seed results.
+
+    W-R: at h = 10, the mean gain of the rollout over persistence on the four thresholded
+    quantities is at least 0.05 for the one-step and the multi-step model, on every seed.
+    W-S (epsilon = 1e-3, every seed): the stochastic model's sensitivity growth rate is
+    within 30 % of the simulator's and closer to it than the deterministic one-step model.
+    The stochastic model's W-C, W-P and W-R scores are reported without thresholds.
+    """
+    models = [name for name, _, _ in AMENDMENT3_MODELS]
+    wr: dict[str, Any] = {}
+    for m in models:
+        gains = {f"h{h}": [_gain(s[m]["rollout_readouts"], h) for s in seeds] for h in HORIZONS}
+        wr[m] = {
+            "mean_gain_over_persistence": gains,
+            "passes_h10": min(gains["h10"]) >= 0.05,
+            "quantities": {
+                f"h{h}": {
+                    name: {
+                        key: _summary([s[m]["rollout_readouts"][f"h{h}"][name][key] for s in seeds])
+                        for key in ("rollout_r2", "persistence_r2")
+                    }
+                    for name in DIAGNOSTIC_NAMES
+                }
+                for h in HORIZONS
+            },
+        }
+    key = "eps0.001"
+    true_rate = truth[key]["growth_rate"]
+    det = [s["k1"]["predictability"][key]["growth_rate"] for s in seeds]
+    sens = [s["stoch"]["predictability"][key]["growth_rate"] for s in seeds]
+    det_err = [_rel_err(r, true_rate) for r in det]
+    sens_err = [_rel_err(r, true_rate) for r in sens]
+    ws_ok = all(
+        se is not None and se <= 0.30 and (de is None or se < de)
+        for se, de in zip(sens_err, det_err, strict=True)
+    )
+    arrow = [s["stoch"]["arrow_accuracy"] for s in seeds]
+    return {
+        "W-R": {
+            "horizons": list(HORIZONS),
+            "criterion_quantities": list(THRESHOLDED),
+            "models": wr,
+            "supported": bool(wr["k1"]["passes_h10"] and wr["k8"]["passes_h10"]),
+        },
+        "W-S": {
+            "epsilon": 1e-3,
+            "true_growth_rate": true_rate,
+            "deterministic_k1_growth_rate": det,
+            "stochastic_sensitivity_growth_rate": sens,
+            "stochastic_spread_growth_rate": [
+                s["stoch"]["predictability"]["spread"]["growth_rate"] for s in seeds
+            ],
+            "deterministic_k1_relative_error": det_err,
+            "stochastic_relative_error": sens_err,
+            "supported": ws_ok,
+        },
+        "stochastic_reported": {
+            "W-C_accuracy": _summary(arrow),
+            "W-P_r2": {
+                name: _summary([s["stoch"]["readouts"][name]["test_r2"] for s in seeds])
+                for name in DIAGNOSTIC_NAMES
+            },
+            "W-R": "see W-R.models.stoch (mean of sampled rollouts, no threshold)",
+        },
+        "retrained_k1_k8": verdicts(truth, seeds),
+        "any_collapse": any(s[m]["collapsed"] for s in seeds for m in models),
+    }
+
+
+def run(
+    profile_name: str,
+    partial: Path | None = None,
+    *,
+    amendment3: bool = False,
+    checkpoints: Path | None = None,
+) -> dict[str, Any]:
     """Simulate the data once, then train and evaluate every seed, and apply the criteria.
 
     With ``partial``, the record is rewritten there after every seed, and a run restarted
     with the same file skips the seeds (and the truth) it already holds, provided the
-    profile matches.
+    profile matches. ``amendment3`` switches to the measurements of protocol amendment 3
+    (see :func:`run_seed` and :func:`verdicts_amendment3`); ``checkpoints`` is the directory
+    where trained weights are saved and looked up.
     """
     profile = PROFILES[profile_name]
     torch.set_num_threads(TORCH_THREADS)
@@ -510,7 +660,20 @@ def run(profile_name: str, partial: Path | None = None) -> dict[str, Any]:
             "truth": {"predictability": truth, "arrow_accuracy": oracle_arrow},
             "seeds": seeds,
         }
-        if final:
+        if amendment3:
+            rec["amendment3"] = {
+                "noise_dim": NOISE_DIM,
+                "horizons": list(HORIZONS),
+                "readout_sampled_rollouts": READOUT_SAMPLES,
+                "ensemble_members": ENSEMBLE_MEMBERS,
+                "stochastic_readout": "mean of the probe outputs over the sampled rollouts",
+                "sensitivity": "twin rollouts from clean and perturbed frames, same noise sequence",
+                "spread": "mean pairwise distance of members from one state, independent noise",
+            }
+        if final and amendment3:
+            rec["verdicts"] = verdicts_amendment3(truth, seeds)
+            rec["verdicts"]["retrained_k1_k8"]["W-C"]["oracle_accuracy"] = oracle_arrow
+        elif final:
             rec["verdicts"] = verdicts(truth, seeds)
             rec["verdicts"]["W-C"]["oracle_accuracy"] = oracle_arrow
         return rec
@@ -518,7 +681,7 @@ def run(profile_name: str, partial: Path | None = None) -> dict[str, Any]:
     for s in profile.seeds:
         if any(prev["seed"] == s for prev in seeds):
             continue
-        seeds.append(run_seed(data, profile, s))
+        seeds.append(run_seed(data, profile, s, amendment3=amendment3, checkpoints=checkpoints))
         seeds.sort(key=lambda r: r["seed"])
         if partial is not None:
             partial.write_text(json.dumps(record(final=False), indent=2) + "\n")
@@ -530,11 +693,24 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=sorted(PROFILES), default="full")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--amendment3", action="store_true", help="measure protocol amendment 3 (W-R, W-S)"
+    )
+    parser.add_argument(
+        "--checkpoints",
+        type=Path,
+        default=None,
+        help="directory for trained weights (saved, and reused on restart); keep it out of Git",
+    )
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
-    partial = args.out / f"qg-{args.profile}.partial.json"
-    record = run(args.profile, partial=partial)
-    path = args.out / f"qg-{args.profile}.json"
+    stem = f"qg-{args.profile}"
+    if args.amendment3:
+        stem = "qg-amendment3" if args.profile == "full" else f"qg-amendment3-{args.profile}"
+    partial = args.out / f"{stem}.partial.json"
+    checkpoints = args.checkpoints / stem if args.checkpoints is not None else None
+    record = run(args.profile, partial=partial, amendment3=args.amendment3, checkpoints=checkpoints)
+    path = args.out / f"{stem}.json"
     path.write_text(json.dumps(record, indent=2) + "\n")
     partial.unlink(missing_ok=True)
     print(json.dumps(record["verdicts"], indent=2))
