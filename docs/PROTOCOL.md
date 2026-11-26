@@ -155,3 +155,15 @@ Predictability of a stochastic model is measured in two ways, and only the first
 | W-S | Same on the QG world | sensitivity growth rate within 30 % of the simulator's twin-divergence growth rate, and closer to it than the deterministic one-step model |
 
 The stochastic models are also scored on W-C, W-P and W-R, reported without thresholds. The models of the first run were not saved, so W-R is measured on models retrained with the same configuration and seeds; trained weights are stored outside Git.
+
+### 4. 2026-11-26, after an exploratory analysis of the arrow-of-time probe
+
+An exploratory analysis on true QG fields only, with no model involved (`scripts/explore_arrow_probe.py`, record `results/exploratory/arrow-probe-qg.json`), showed what the probe of diagnostic C detects. Against plain time reversal it reaches 90 % (8 PCA components, clips of 16 snapshots) to 100 % (32 components, clips of 64) on 1 116 test clips. When the reversed clip is also mirrored in x with the sign of v flipped, a transformation under which the inviscid QG equations are invariant and which therefore keeps the direction of wave propagation, the same probe falls to chance (43 to 55 % across the 16 settings of the record). With its current features, the probe reads the direction in which waves propagate, not physical irreversibility.
+
+Changes:
+
+- **Interpretation.** The H0-C and W-C verdicts stand as measured. Their interpretation is corrected in the results: the latents keep the direction of wave propagation; nothing is claimed about irreversibility.
+- **Mirrored control.** Every later arrow-of-time result on the QG world is reported twice, against plain reversal and against reversal combined with the x-mirror, on true fields and on latents (for latents, the mirrored clip is encoded after mirroring the fields).
+- **Lorenz-96.** No equivalent control was run on Lorenz-96, whose waves also have a preferred direction of propagation; its H0-C result is reported with that caveat.
+- **Irreversibility.** A diagnostic aimed at true irreversibility (one that stays above chance under the mirrored control on true fields) will be defined in a later amendment before it is applied to any model.
+- **Open point.** With the protocol's sizes (56 training runs, 100 snapshots, 8 components, clips of 16) the exploratory analysis gives 87 % on true fields, against 76.5 % in the first step-2 run. The difference is not explained yet; the two computations differ at least in the standardisation of the fields and in the probe's training clips, and this is to be traced before diagnostic C is used again.
