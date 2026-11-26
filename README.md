@@ -4,7 +4,7 @@
 
 Probing what a latent world model has learned about storm dynamics, with dynamical-systems diagnostics instead of forecast scores alone.
 
-> **Status:** step 1 of 5, protocol written, no code yet. See the [roadmap](#status-and-roadmap). Expect breaking changes.
+> **Status:** step 2 of 5, diagnostics calibrated on simulated systems. See the [roadmap](#status-and-roadmap). Expect breaking changes.
 
 ## Why
 
@@ -56,17 +56,51 @@ The full protocol, frozen before any measurement, is in [docs/PROTOCOL.md](docs/
 | A growth mode tracks intensification | Spearman ≥ 0.3 with the VIL growth rate |
 | The arrow of time is readable, and pretraining helps | probe > 80 %, and ≥ 5 points above the from-scratch model |
 
-Splits are by date, tuning uses the validation split only, and every number will come from a versioned run record. Negative results are reported.
+Splits are by date, tuning uses the validation split only, and every number comes from a versioned run record under `results/`. Negative results are reported.
+
+## Results so far
+
+Calibration on simulated systems with known answers (3 seeds, details and caveats in [docs/RESULTS.md](docs/RESULTS.md)):
+
+| Diagnostic | On the true system | On the small JEPA | Verdict |
+|---|---|---|---|
+| A. Predictability (Lorenz-96 Lyapunov exponent ≈ 1.69) | 1.70 to 1.74 | −0.03 to 0.13 | not supported: the learned latent dynamics do not diverge |
+| B. Growth and decay modes (linear map) | exact | moduli within 7.4 %, but the growing mode comes out damped | supported, with a caveat |
+| C. Arrow of time (irreversible vs reversible) | 100 % vs 49 to 52 % | 91 to 95 % vs 51 to 52 % | supported |
+
+The diagnostic code recovers the known answers; the small world model keeps the arrow of time but loses chaotic error growth.
 
 ## Status and roadmap
 
 | Step | Content | State |
 |---|---|---|
-| 1 | Repository foundation, protocol | in progress |
-| 2 | Lorenz-96 and linear systems, small JEPA, calibrated diagnostics | planned |
+| 1 | Repository foundation, protocol | done |
+| 2 | Lorenz-96 and linear systems, small JEPA, calibrated diagnostics | done, see [results](docs/RESULTS.md) |
 | 3 | SEVIR subset with NOAA Storm Events join, adapted V-JEPA 2, small JEPA from scratch | planned |
 | 4 | Diagnostics on radar, Earthformer comparison | planned |
 | 5 | Results, report | planned |
+
+## Run it
+
+Requires [uv](https://docs.astral.sh/uv/). The calibration runs on a laptop CPU in about two minutes and downloads nothing beyond the Python dependencies.
+
+```bash
+git clone https://github.com/gabrielkpo/weather-world-model.git && cd weather-world-model
+uv sync --locked
+uv run python -m weather_world_model.calibration.run --profile full --out results/calibration
+```
+
+The run writes `results/calibration/calibration-full.json` and prints the verdicts.
+
+## Project structure
+
+| Path | Content |
+|---|---|
+| `src/weather_world_model/calibration/` | Lorenz-96, linear and reversible oscillators, calibration runner |
+| `src/weather_world_model/jepa.py` | small sequence JEPA (encoder, predictor, EMA target, variance-covariance terms) |
+| `src/weather_world_model/diagnostics/` | predictability, DMD modes, arrow-of-time probe |
+| `docs/` | frozen protocol and results |
+| `results/` | versioned run records |
 
 ## Related work
 
