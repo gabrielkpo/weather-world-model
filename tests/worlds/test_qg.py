@@ -160,3 +160,38 @@ def test_spun_up_flow_is_turbulent() -> None:
     d = diagnostics(model)
     assert d["n_vortices"] >= 2
     assert 0.3 < d["jet_speed_max"] < 5.0
+
+
+def _total_energy_and_enstrophy(model: QGModel) -> tuple[float, float]:
+    d = diagnostics(model)
+    return d["kinetic_energy"] + d["available_potential_energy"], d["enstrophy"]
+
+
+@pytest.mark.parametrize("beta", [0.0, 6.0])
+def test_inviscid_unforced_flow_conserves_energy_and_enstrophy(beta: float) -> None:
+    # Without background shear, bottom drag and spectral filter, the two-layer QG equations
+    # conserve total energy and potential enstrophy; the spectral Galerkin truncation keeps
+    # both exactly, so only the time-stepping error remains. The initial state is truncated
+    # to the dealiased wavenumbers, otherwise aliasing of the unresolved modes breaks it.
+    cfg = QGConfig(U1=0.0, U2=0.0, rek=0.0, beta=beta, filter_cutoff=100.0, dt=0.002)
+    model = QGModel(cfg, np.random.default_rng(0))
+    model._qh = model._qh * model._dealias
+    e0, z0 = _total_energy_and_enstrophy(model)
+    model.step(1000)
+    e1, z1 = _total_energy_and_enstrophy(model)
+    assert abs(e1 - e0) / e0 < 1e-4
+    assert abs(z1 - z0) / z0 < 1e-5
+
+
+def test_time_stepping_error_shrinks_with_dt() -> None:
+    drifts = []
+    for dt in (0.002, 0.001):
+        cfg = QGConfig(U1=0.0, U2=0.0, rek=0.0, filter_cutoff=100.0, dt=dt)
+        model = QGModel(cfg, np.random.default_rng(1))
+        model._qh = model._qh * model._dealias
+        e0, _ = _total_energy_and_enstrophy(model)
+        model.step(round(2.0 / dt))
+        e1, _ = _total_energy_and_enstrophy(model)
+        drifts.append(abs(e1 - e0) / e0)
+    # third-order scheme in theory, at least second order observed
+    assert drifts[1] < drifts[0] / 3
