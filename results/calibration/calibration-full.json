@@ -1,6 +1,6 @@
 {
-  "code_commit": "cbe2eb260978adaa30b9e46ac81bdd3d8963f0b4",
-  "date": "2026-11-26T10:27:51+00:00",
+  "code_commit": "b18332031356a5516c94ebe5700c2f06ba331132",
+  "date": "2026-11-26T10:31:05+00:00",
   "profile": "full",
   "config": {
     "n_trajectories": 200,
@@ -1640,6 +1640,14 @@
             0.042330033514112526,
             0.057188914409345426,
             0.057188914409345426
+          ],
+          "growth_preserved": [
+            false,
+            false,
+            true,
+            true,
+            true,
+            true
           ]
         },
         "oracle": {
@@ -1659,6 +1667,14 @@
             3.700743415417188e-16,
             1.004221831319237e-15,
             1.004221831319237e-15
+          ],
+          "growth_preserved": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
           ]
         }
       },
@@ -1689,6 +1705,14 @@
             0.05544105561559327,
             0.04532969843815682,
             0.04532969843815682
+          ],
+          "growth_preserved": [
+            false,
+            false,
+            true,
+            true,
+            true,
+            true
           ]
         },
         "oracle": {
@@ -1708,6 +1732,14 @@
             1.2335811384723961e-15,
             3.347406104397457e-16,
             3.347406104397457e-16
+          ],
+          "growth_preserved": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
           ]
         }
       },
@@ -1738,6 +1770,14 @@
             0.04219422429438537,
             0.057311756919651395,
             0.057311756919651395
+          ],
+          "growth_preserved": [
+            false,
+            false,
+            true,
+            true,
+            true,
+            true
           ]
         },
         "oracle": {
@@ -1757,6 +1797,14 @@
             1.1102230246251565e-15,
             7.810614243594066e-16,
             7.810614243594066e-16
+          ],
+          "growth_preserved": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
           ]
         }
       }
@@ -1815,7 +1863,8 @@
         "min": 0.05544105561559327,
         "max": 0.07428182252938763
       },
-      "supported": true
+      "supported": true,
+      "growth_preserved_all_seeds": false
     },
     "H0-C": {
       "lorenz96_accuracy": {
