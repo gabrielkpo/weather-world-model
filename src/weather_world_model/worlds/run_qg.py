@@ -542,7 +542,7 @@ def verdicts_amendment3(truth: dict[str, Any], seeds: list[dict[str, Any]]) -> d
         gains = {f"h{h}": [_gain(s[m]["rollout_readouts"], h) for s in seeds] for h in HORIZONS}
         wr[m] = {
             "mean_gain_over_persistence": gains,
-            "passes_h10": min(gains["h10"]) >= 0.05,
+            "passes_h10": all(g >= 0.05 for g in gains["h10"]),
             "quantities": {
                 f"h{h}": {
                     name: {
