@@ -2,61 +2,63 @@
 
 [![CI](https://github.com/gabrielkpo/weather-world-model/actions/workflows/ci.yml/badge.svg)](https://github.com/gabrielkpo/weather-world-model/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Probing what a latent world model has learned about storm dynamics, with dynamical-systems diagnostics instead of forecast scores alone.
+Probing what a latent world model has learned about atmospheric physics, by reading its latent space with dynamical-systems tools, in three steps of increasing realism.
 
-> **Status:** step 2 of 5, diagnostics calibrated on simulated systems. See the [roadmap](#status-and-roadmap). Expect breaking changes.
+> **Status:** step 1 of 3 done (Lorenz-96 proof of concept), step 2 (quasi-geostrophic wind world) in progress. See the [roadmap](#status-and-roadmap). Expect breaking changes.
 
 ## Why
 
-Latent world models, in the line of JEPA and V-JEPA 2, predict how the world evolves in a space of abstract representations rather than in pixels, and they are starting to reach weather and climate. Most of this work reports forecast quality. A complementary question is what such a model has actually learned about the physics. Linear probes and surprise on physically impossible events are already well studied. This project looks at other properties of the latent dynamics:
+Latent world models, in the line of JEPA and V-JEPA 2, predict how the world evolves in a space of abstract representations rather than in pixels, and they are starting to reach weather and climate. Most of this work reports forecast quality. A complementary question is what such a model has actually learned about the physics. Probes and surprise on physically impossible events are already well studied; this project looks at other properties of the latent space:
 
 - **Predictability**: do nearby latent trajectories diverge the way chaotic weather does? AI weather models are known to reproduce fast initial error growth poorly.
-- **Growth and decay modes**: does a linear approximation of the latent dynamics expose modes that match storms intensifying and dissipating?
-- **Arrow of time**: does the latent space encode that storm evolution is irreversible?
+- **Arrow of time**: does the latent space encode that atmospheric evolution is irreversible?
+- **Physical readouts**: can energy, jet speed or vortex strength be read linearly from the latent, where the simulator gives the exact answer?
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    subgraph Calibration
-        L96[Lorenz-96 and linear toy systems] --> JS[small JEPA]
+    subgraph S1[Step 1: proof of concept]
+        L96[Lorenz-96] --> JS1[small JEPA]
     end
-    subgraph Radar
-        SEVIR[SEVIR VIL radar clips] --> VJ[V-JEPA 2 ViT-L, adapted self-supervised]
-        SEVIR --> JR[small JEPA from scratch]
+    subgraph S2[Step 2: wind world]
+        QG[two-layer quasi-geostrophic atmosphere] --> JS2[small JEPA, one-step and multi-step]
+        QG --> VJ2[V-JEPA 2 on wind video]
     end
-    JS --> D[Diagnostics A, B, C]
-    VJ --> D
-    JR --> D
-    D --> TRUTH[Known ground truth]
-    D --> NOAA[NOAA Storm Events: severe vs ordinary storms]
-    EF[Earthformer, pixel space] --> CMP[Diagnostic A comparison]
-    VJ --> CMP
+    subgraph S3[Step 3: real weather]
+        SEVIR[SEVIR radar] --> VJ3[V-JEPA 2 adapted]
+    end
+    JS1 --> D[Diagnostics: predictability, arrow of time, readouts]
+    JS2 --> D
+    VJ2 --> D
+    VJ3 --> D
+    D --> TRUTH[Exact answers from the simulators]
+    D --> NOAA[NOAA Storm Events reports]
 ```
 
-1. **Calibrate.** Each diagnostic is first run on simulated systems with known answers: the leading Lyapunov exponent of Lorenz-96, the eigenvalues of a linear system, a reversible oscillator as negative control.
-2. **Adapt.** V-JEPA 2 (MIT) is adapted to SEVIR radar with its own self-supervised objective, without labels. A small JEPA trained from scratch on the same data isolates what pretraining on natural video brings.
-3. **Interrogate.** The three diagnostics are applied to the latent predictor and confronted with severe storms reported in NOAA Storm Events, which SEVIR links to its events, and with a pixel-space forecaster (Earthformer).
+1. **Proof of concept.** The diagnostics are first run on Lorenz-96, a chaotic system with an exactly computable Lyapunov exponent, to show they recover known answers.
+2. **Wind world.** A two-layer quasi-geostrophic atmosphere (a baroclinic jet with cyclones and anticyclones) gives a 2D world whose physics is fully known. World models are trained on it, with a one-step and a multi-step latent loss, and their latent space is read against the simulator's exact energy, jet speed and vortices.
+3. **Real weather.** V-JEPA 2 (MIT) is adapted to SEVIR radar videos of real storms with its own self-supervised objective, and the same diagnostics are confronted with severe storms reported in NOAA Storm Events.
 
 Technical choices and their trade-offs:
 
-- **A pretrained world model rather than training a large one,** because three weeks on a free GPU cannot match V-JEPA 2's pretraining; the cost is a domain gap (natural RGB video vs one-channel radar), measured by the from-scratch control.
-- **Calibration on simulated systems first,** because real weather has no ground-truth Lyapunov exponent; the cost is time spent on toy systems before radar.
-- **Linear (DMD) approximation for the modes,** because it is interpretable and cheap; the cost is that strongly nonlinear dynamics may be poorly captured, which the reported one-step R² makes visible.
+- **A pretrained world model rather than training a large one,** because three weeks on a free GPU cannot match V-JEPA 2's pretraining; the cost is a domain gap (natural RGB video vs physical fields), measured by a small model trained from scratch.
+- **Two simulated worlds before real data,** because real weather has no ground-truth Lyapunov exponent or energy budget; the cost is time spent before the radar.
+- **Linear readouts,** because a linear probe shows what the latent makes explicit; the cost is missing information stored nonlinearly.
 
 ## Evaluation plan
 
-The full protocol, frozen before any measurement, is in [docs/PROTOCOL.md](docs/PROTOCOL.md). In short:
+The full protocol, frozen before any measurement and amended only through dated entries, is in [docs/PROTOCOL.md](docs/PROTOCOL.md). In short:
 
-| Hypothesis | Success criterion |
-|---|---|
-| Diagnostics recover known answers on calibration systems | Lyapunov exponent within 30 %, eigenvalues within 10 %, arrow-of-time probe > 80 % on Lorenz-96 and < 60 % on a reversible oscillator |
-| Severe storms are less predictable in latent space | shorter predictability horizon than ordinary storms, Mann-Whitney p < 0.05 |
-| The latent model keeps fast initial error growth | initial growth rate ≥ Earthformer's at equal perturbation |
-| A growth mode tracks intensification | Spearman ≥ 0.3 with the VIL growth rate |
-| The arrow of time is readable, and pretraining helps | probe > 80 %, and ≥ 5 points above the from-scratch model |
+| Step | Hypothesis | Success criterion |
+|---|---|---|
+| 1 | The diagnostics recover known answers | Lyapunov exponent within 30 %, arrow-of-time probe > 80 % on Lorenz-96 and < 60 % on a reversible oscillator |
+| 2 | Multi-step training restores chaotic error growth | latent growth rate within 30 % of the simulator's own |
+| 2 | Physical quantities are linearly readable | test R² ≥ 0.7 for energy, enstrophy and jet speed, ≥ 0.1 above random weights |
+| 2 | The arrow of time is readable, and pretraining helps | probe > 80 %; V-JEPA 2 ≥ 0.05 above the small JEPA |
+| 3 | Severe storms are less predictable in latent space | shorter horizon than ordinary storms, Mann-Whitney p < 0.05 |
 
-Splits are by date, tuning uses the validation split only, and every number comes from a versioned run record under `results/`. Negative results are reported.
+Splits are by run or by date, tuning uses the validation split only, and every number comes from a versioned run record under `results/`. Negative results are reported.
 
 ## Results so far
 
@@ -68,17 +70,17 @@ Calibration on simulated systems with known answers (3 seeds, details and caveat
 | B. Growth and decay modes (linear map) | exact | moduli within 7.4 %, but the growing mode comes out damped | supported, with a caveat |
 | C. Arrow of time (irreversible vs reversible) | 100 % vs 49 to 52 % | 91 to 95 % vs 51 to 52 % | supported |
 
-The diagnostic code recovers the known answers; the small world model keeps the arrow of time but loses chaotic error growth.
+The diagnostic code recovers the known answers; the small world model keeps the arrow of time but loses chaotic error growth. The modes diagnostic was withdrawn afterwards (protocol amendment 2).
 
 ## Status and roadmap
 
 | Step | Content | State |
 |---|---|---|
-| 1 | Repository foundation, protocol | done |
-| 2 | Lorenz-96 and linear systems, small JEPA, calibrated diagnostics | done, see [results](docs/RESULTS.md) |
-| 3 | SEVIR subset with NOAA Storm Events join, adapted V-JEPA 2, small JEPA from scratch | planned |
-| 4 | Diagnostics on radar, Earthformer comparison | planned |
-| 5 | Results, report | planned |
+| 0 | Repository foundation, protocol | done |
+| 1 | Lorenz-96 proof of concept, calibrated diagnostics | done, see [results](docs/RESULTS.md) |
+| 2 | Quasi-geostrophic wind world: simulator, small JEPA (one-step and multi-step), V-JEPA 2, predictability, arrow of time, readouts | in progress |
+| 3 | SEVIR radar with NOAA Storm Events, adapted V-JEPA 2 | planned |
+| 4 | Results, report | planned |
 
 ## Run it
 
