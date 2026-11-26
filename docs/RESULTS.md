@@ -70,7 +70,7 @@ Run record: [`results/qg/qg-full.json`](../results/qg/qg-full.json) (code commit
 uv run python -m weather_world_model.worlds.run_qg --profile full --out results/qg
 ```
 
-Hypotheses W-A, W-C and W-P of protocol amendment 2. W-V needs a GPU and is not measured here; L-S (amendment 3) is reported in step 1 above; W-R and W-S (amendment 3) are measured in a later run.
+Hypotheses W-A, W-C and W-P of protocol amendment 2. W-V needs a GPU and is not measured here; L-S (amendment 3) is reported in step 1 above; W-R and W-S (amendment 3) are reported in their own subsection below.
 
 Setup: 80 independent runs of the two-layer QG model, split by run 56 / 12 / 12 (train / validation / test), 100 snapshots per run every 0.1 time units after a spin-up of 4 000 steps, field = upper-layer eddy winds `u, v` (2 × 64 × 64), standardised per channel with training statistics. Per seed, the convolutional JEPA (channels 32-64-96-128, latent dimension 32, batch 64, 3 000 steps) is trained with a one-step loss (k = 1) and with an 8-step latent rollout loss (k = 8) on the same data; the same encoder with random weights is the W-P control. No model collapsed (final latent std 0.98 to 1.04).
 
@@ -95,6 +95,58 @@ Ranges are minimum to maximum over the three seeds; verdicts use the worst seed.
 - **Multi-step training does not restore chaotic error growth; it makes it worse.** The simulator's twin errors grow at about 0.7 per time unit and reach 30 % of saturation after about 10 time units. The one-step model's latent separation grows at less than a third of that rate, and the 8-step model's separation does not grow at all (rates around zero, normalised separation below 0.001 after 15 time units). Neither latent curve reaches the 0.3 ceiling within the 150 steps, so their rates are fitted over the whole rollout. This repeats the Lorenz-96 finding: the learned predictors are contractive, and a rollout loss pushes them further towards smooth, non-diverging forecasts.
 - **The arrow of time is not readable at the 80 % level, but neither is it from the true fields.** The probe on the true wind fields (same PCA to 8 dimensions, same clips of 16 snapshots) reaches 76.5 %, and both models match it (75 to 79 %). The latents keep the time asymmetry that this probe can see in the data; the criterion fails because the probe itself tops out below 80 % on this world, not because the encoder loses information.
 - **Energies and enstrophy are linearly readable; the jet is not.** Kinetic energy, available potential energy and enstrophy are read with R² 0.70 to 0.87, well above the random-weight encoder (which already reaches 0.3 to 0.7, since a random convolutional net keeps much of the field's amplitude). The one-step model misses the kinetic-energy margin on one seed. Maximum zonal-mean jet speed is no better than random (about 0.4), so W-P fails for both models. Vortex count is barely readable (0.2).
+
+### Rollout readouts and stochastic predictor (hypotheses W-R and W-S, protocol amendment 3)
+
+Run record: [`results/qg/qg-amendment3.json`](../results/qg/qg-amendment3.json) (code commit `311fafc`, profile `full`, seeds 0, 1, 2, CPU, 2 h 29 min of compute). Reproduce with:
+
+```bash
+uv run python -m weather_world_model.worlds.run_qg --profile full --amendment3 --out results/qg --checkpoints checkpoints
+```
+
+Same data and setup as above. Per seed, the k = 1 and k = 8 models are retrained with the same configuration and seed as in the first run (their W-A and W-P values in this record are identical to the first record, value for value), and a third model is added: the one-step model with a stochastic predictor (noise vector of dimension 8, two-sample energy score). Trained weights are saved outside Git. No model collapsed (stochastic model: final latent std 0.81 to 0.89).
+
+**W-R, rollout readouts.** The W-P probes, fitted on latents of real frames, are applied to latents rolled out h snapshots by the predictor and scored against the simulator's true quantity at t + h (test runs). The control is persistence: the same probe on the latent of frame t. For the stochastic model the estimate is the mean of the probe outputs over 8 sampled rollouts. The criterion is on the gain, R² of the rollout minus R² of persistence, averaged over kinetic energy, available potential energy, enstrophy and jet speed, at h = 10 (one time unit): at least 0.05 for the k = 1 and the k = 8 model, on every seed.
+
+| Mean gain over persistence (seeds 0, 1, 2) | h = 1 | h = 5 | h = 10 | Passes at h = 10 |
+|---|---|---|---|---|
+| k = 1 | 0.003, −0.013, 0.010 | −0.03, −0.35, −0.17 | −0.20, −1.57, −0.84 | no |
+| k = 8 | −0.007, −0.003, −0.002 | −0.023, −0.004, 0.014 | 0.0495, 0.047, 0.101 | no (one seed of three) |
+| stochastic (reported) | −0.003, −0.002, 0.012 | −0.23, −0.08, 0.04 | −1.18, −0.34, 0.08 | no threshold |
+
+| R² at h = 10, rollout (persistence) | k = 1 | k = 8 | stochastic |
+|---|---|---|---|
+| kinetic energy | −0.62 to 0.51 (0.40 to 0.53) | 0.57 to 0.64 (0.53 to 0.58) | −0.43 to 0.52 (0.29 to 0.39) |
+| available potential energy | −0.43 to 0.36 (0.52 to 0.60) | 0.59 to 0.64 (0.53 to 0.60) | 0.32 to 0.62 (0.51 to 0.54) |
+| enstrophy | 0.08 to 0.67 (0.61 to 0.71) | 0.72 to 0.79 (0.64 to 0.70) | 0.34 to 0.68 (0.56 to 0.61) |
+| jet speed | −3.93 to −0.57 (0.05 to 0.12) | 0.13 to 0.28 (0.11 to 0.16) | −3.64 to −0.02 (−0.05 to 0.13) |
+| max cyclonic vorticity (reported) | −0.20 to 0.30 (0.54 to 0.58) | 0.62 to 0.67 (0.51 to 0.54) | 0.37 to 0.59 (0.50 to 0.61) |
+| max anticyclonic vorticity (reported) | −2.40 to 0.04 (0.50 to 0.63) | 0.68 to 0.72 (0.58 to 0.64) | 0.49 to 0.59 (0.57 to 0.59) |
+| vortex count (reported) | −0.29 to 0.00 (0.04 to 0.07) | 0.11 to 0.15 (0.09 to 0.12) | −0.25 to 0.09 (0.06 to 0.12) |
+
+Ranges are minimum to maximum over the three seeds, each model against the persistence of its own encoder. Per-quantity values at h = 1 and h = 5 are in the record. **W-R is not supported**: the one-step model is far below persistence at h = 10 on every seed, and the 8-step model reaches the 0.05 gain on one seed only (0.0495 and 0.047 on the other two).
+
+**W-S, stochastic predictor.** Sensitivity is the growth rate of the latent separation between rollouts from the clean and the perturbed start frame driven by the same noise sequence (ε = 1e-3, rule of diagnostic A); it decides W-S. Ensemble spread (8 rollouts from the same latent with independent noise, mean distance between pairs of members, same normalisation) is reported.
+
+| Seed | Simulator twin divergence | Deterministic k = 1 | Stochastic sensitivity | Stochastic relative error |
+|---|---|---|---|---|
+| 0 | 0.71 | 0.20 | 0.12 | 0.83 |
+| 1 | 0.71 | 0.23 | 0.08 | 0.89 |
+| 2 | 0.71 | 0.26 | −0.004 | 1.01 |
+
+Rates are per time unit. **W-S is not supported**: the criterion asks for a sensitivity growth rate within 30 % of the simulator's and closer to it than the deterministic one-step model; the stochastic rate is lower than the deterministic one on every seed (0.04 to 0.07 at ε = 1e-2). Ensemble spread, as a fraction of the saturation distance: 0.27 to 0.29 after 3 snapshots, 0.39 to 0.46 after 7, 0.77 to 1.13 after 50, and 1.8 to 3.9 after 150. The spread passes the 0.3 ceiling after about 3 snapshots, so its fitted rate (2.3 to 2.8 per time unit) rests on steps 1 to 3 and is not an exponential growth rate.
+
+**Stochastic model on W-C and W-P (reported, no threshold).** Arrow-of-time probe: 76.5 %, 87.9 % and 78.0 % (true fields 76.5 %, deterministic models 75 to 79 %). As established by the exploratory analysis below (protocol amendment 4), this probe reads the direction of wave propagation, not irreversibility; the mirrored control of amendment 4 was not part of this run. Readouts on real frames (R²): kinetic energy 0.64 to 0.68, available potential energy 0.72 to 0.77, enstrophy 0.76 to 0.82, jet speed 0.37 to 0.42, maximum cyclonic vorticity 0.68 to 0.71, maximum anticyclonic vorticity 0.69 to 0.72, vortex count 0.20 to 0.22: slightly below the deterministic one-step model on kinetic energy and enstrophy, similar elsewhere.
+
+The record's code commit is the last commit of the branch before it was squash-merged. The run was started one commit earlier (`595c191`); the only change in between is the form of the W-R pass test (`all(...)` instead of `min(...)`), which gives the same verdict on these values.
+
+#### What this says
+
+- **The one-step predictor does not carry the physics forward.** After one step its rollout reads as well as persistence, which only says that one step changes little. After 10 steps its readouts are much worse than assuming nothing changes, with negative R² on several quantities and seeds: iterating the predictor takes the latent to places where the probes no longer mean anything.
+- **The 8-step predictor does slightly better than "no change", not enough for the criterion.** At h = 10 it beats persistence on every seed and on all seven quantities, by 0.05 to 0.10 on average over the four criterion quantities. Two seeds fall just under the 0.05 threshold (by 0.0005 and 0.003), so W-R fails as written. The honest reading is a small, consistent gain: this predictor moves energies and enstrophy in the right direction over one time unit, while being the model whose error growth is furthest from the truth (W-A).
+- **Noise does not restore sensitivity to initial conditions on the QG world either.** With the noise held fixed, the stochastic model's latent separation grows at 0.12, 0.08 and −0.004 per time unit, against 0.71 for the simulator and 0.20 to 0.26 for the deterministic one-step model. As on Lorenz-96, the stochastic predictor is at least as contractive as the deterministic one.
+- **Its ensembles spread, and then keep spreading past the data.** Members started from the same state are about 0.3 of the saturation distance apart after 3 snapshots, and 1.8 to 3.9 times the saturation distance apart after 150: further from each other than two unrelated real states. The diversity comes from the noise injected at each step and accumulates without bound, instead of growing from the initial error and saturating as in the simulator. Its mean rollout readouts are unstable across seeds at h = 10 (gain −1.18 to 0.08).
+- **Taken together:** none of the three training variants (one-step, 8-step, stochastic) reproduces the simulator's error growth, and only the 8-step model shows any evidence of predicting physical quantities beyond persistence, by a small margin.
 
 ### Exploratory: what the arrow-of-time probe detects (protocol amendment 4)
 
