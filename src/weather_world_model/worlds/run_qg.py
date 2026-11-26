@@ -13,7 +13,10 @@ same encoder with random weights (control for W-P).
 from __future__ import annotations
 
 import argparse
+import gc
 import json
+import resource
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -52,6 +55,18 @@ EPSILONS = (1e-3, 1e-2)
 RIDGE_ALPHAS = (1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0, 1000.0)
 THRESHOLDED = ("kinetic_energy", "available_potential_energy", "enstrophy", "jet_speed_max")
 CURVE_POINTS = 40  # curves are stored subsampled to keep the record small
+TORCH_THREADS = 4
+
+
+def log(message: str) -> None:
+    """Progress line on stderr, flushed at once (long runs are watched from a log file)."""
+    print(f"[{datetime.now(UTC).strftime('%H:%M:%S')}] {message}", file=sys.stderr, flush=True)
+
+
+def peak_rss_mb() -> float:
+    """Peak resident memory of this process in MB (macOS reports bytes, Linux kilobytes)."""
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return rss / 2**20 if sys.platform == "darwin" else rss / 2**10
 
 
 @dataclass(frozen=True)
@@ -347,8 +362,18 @@ def run_seed(data: QGData, profile: Profile, seed: int) -> dict[str, Any]:
             log_every=max(1, profile.train_steps // 50),
         )
         t0 = time.perf_counter()
+
+        def progress(step: int, loss: float, std: float, name: str = name, t0: float = t0) -> None:
+            done = step + 1
+            elapsed = time.perf_counter() - t0
+            eta = elapsed / done * (profile.train_steps - done)
+            log(
+                f"seed {seed} {name} step {done}/{profile.train_steps} loss {loss:.4f} "
+                f"latent_std {std:.3f} elapsed {elapsed:.0f}s eta {eta:.0f}s"
+            )
+
         model, history = train_jepa(
-            data.frames["train"], cfg, n_steps=profile.train_steps, seed=seed
+            data.frames["train"], cfg, n_steps=profile.train_steps, seed=seed, progress=progress
         )
         train_s = time.perf_counter() - t0
         out[name] = {
@@ -359,9 +384,13 @@ def run_seed(data: QGData, profile: Profile, seed: int) -> dict[str, Any]:
             "loss_subsampled": _subsample(np.asarray(history.loss)),
             **evaluate_model(model, data, profile, seed, dynamics=True),
         }
+        log(f"seed {seed} {name} evaluated, peak RSS {peak_rss_mb():.0f} MB")
+        del model, history
+        gc.collect()
     seed_everything(seed)
     random_model = SequenceJEPA(cfg)  # same architecture as the trained models, untrained
     out["random"] = evaluate_model(random_model, data, profile, seed, dynamics=False)
+    out["peak_rss_mb"] = peak_rss_mb()
     return out
 
 
@@ -426,39 +455,75 @@ def verdicts(truth: dict[str, Any], seeds: list[dict[str, Any]]) -> dict[str, An
     }
 
 
-def run(profile_name: str) -> dict[str, Any]:
-    """Simulate the data once, then train and evaluate every seed, and apply the criteria."""
+def run(profile_name: str, partial: Path | None = None) -> dict[str, Any]:
+    """Simulate the data once, then train and evaluate every seed, and apply the criteria.
+
+    With ``partial``, the record is rewritten there after every seed, and a run restarted
+    with the same file skips the seeds (and the truth) it already holds, provided the
+    profile matches.
+    """
     profile = PROFILES[profile_name]
+    torch.set_num_threads(TORCH_THREADS)
     t0 = time.perf_counter()
+    done: dict[str, Any] = {}
+    if partial is not None and partial.exists():
+        previous = json.loads(partial.read_text())
+        if previous.get("config") == json.loads(json.dumps(asdict(profile))):
+            done = previous
+            log(f"resuming from {partial}: seeds {[s['seed'] for s in done['seeds']]} done")
     data = simulate(profile)
     simulate_s = time.perf_counter() - t0
-    truth = true_predictability(data, profile, profile.data_seed)
-    oracle_arrow = arrow_probe(
-        data.frames["train"].reshape(*data.frames["train"].shape[:2], -1),
-        data.frames["test"].reshape(*data.frames["test"].shape[:2], -1),
-        profile,
-        profile.data_seed,
-    )
-    seeds = [run_seed(data, profile, s) for s in profile.seeds]
-    record_verdicts = verdicts(truth, seeds)
-    record_verdicts["W-C"]["oracle_accuracy"] = oracle_arrow
-    return {
-        "code_commit": _git_commit(),
-        "date": datetime.now(UTC).isoformat(timespec="seconds"),
-        "profile": profile_name,
-        "config": asdict(profile),
-        "qg_config": asdict(QGConfig()),
-        "split_runs": dict(zip(("train", "val", "test"), split_sizes(profile.n_runs), strict=True)),
-        "sample_dt": data.sample_dt,
-        "field": "uv",
-        "diagnostic_names": list(DIAGNOSTIC_NAMES),
-        "torch_version": torch.__version__,
-        "simulate_seconds": simulate_s,
-        "wall_seconds": time.perf_counter() - t0,
-        "truth": {"predictability": truth, "arrow_accuracy": oracle_arrow},
-        "seeds": seeds,
-        "verdicts": record_verdicts,
-    }
+    log(f"simulated {profile.n_runs} runs in {simulate_s:.0f}s, peak RSS {peak_rss_mb():.0f} MB")
+    if "truth" in done:
+        truth = done["truth"]["predictability"]
+        oracle_arrow = done["truth"]["arrow_accuracy"]
+    else:
+        truth = true_predictability(data, profile, profile.data_seed)
+        oracle_arrow = arrow_probe(
+            data.frames["train"].reshape(*data.frames["train"].shape[:2], -1),
+            data.frames["test"].reshape(*data.frames["test"].shape[:2], -1),
+            profile,
+            profile.data_seed,
+        )
+        log(f"truth done, peak RSS {peak_rss_mb():.0f} MB")
+    seeds: list[dict[str, Any]] = list(done.get("seeds", []))
+    previous_wall = float(done.get("wall_seconds", 0.0))
+
+    def record(final: bool) -> dict[str, Any]:
+        rec: dict[str, Any] = {
+            "code_commit": _git_commit(),
+            "date": datetime.now(UTC).isoformat(timespec="seconds"),
+            "profile": profile_name,
+            "config": asdict(profile),
+            "qg_config": asdict(QGConfig()),
+            "split_runs": dict(
+                zip(("train", "val", "test"), split_sizes(profile.n_runs), strict=True)
+            ),
+            "sample_dt": data.sample_dt,
+            "field": "uv",
+            "diagnostic_names": list(DIAGNOSTIC_NAMES),
+            "torch_version": torch.__version__,
+            "torch_threads": TORCH_THREADS,
+            "simulate_seconds": simulate_s,
+            "wall_seconds": previous_wall + time.perf_counter() - t0,
+            "resumed": bool(done),
+            "truth": {"predictability": truth, "arrow_accuracy": oracle_arrow},
+            "seeds": seeds,
+        }
+        if final:
+            rec["verdicts"] = verdicts(truth, seeds)
+            rec["verdicts"]["W-C"]["oracle_accuracy"] = oracle_arrow
+        return rec
+
+    for s in profile.seeds:
+        if any(prev["seed"] == s for prev in seeds):
+            continue
+        seeds.append(run_seed(data, profile, s))
+        seeds.sort(key=lambda r: r["seed"])
+        if partial is not None:
+            partial.write_text(json.dumps(record(final=False), indent=2) + "\n")
+            log(f"seed {s} written to {partial}")
+    return record(final=True)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -466,10 +531,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--profile", choices=sorted(PROFILES), default="full")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
-    record = run(args.profile)
     args.out.mkdir(parents=True, exist_ok=True)
+    partial = args.out / f"qg-{args.profile}.partial.json"
+    record = run(args.profile, partial=partial)
     path = args.out / f"qg-{args.profile}.json"
     path.write_text(json.dumps(record, indent=2) + "\n")
+    partial.unlink(missing_ok=True)
     print(json.dumps(record["verdicts"], indent=2))
 
 

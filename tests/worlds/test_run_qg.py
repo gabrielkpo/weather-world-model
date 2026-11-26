@@ -55,3 +55,14 @@ def test_smoke_profile_writes_record(tmp_path: Path) -> None:
     assert set(verdicts) == {"W-A", "W-C", "W-P", "any_collapse"}
     assert isinstance(verdicts["W-A"]["supported"], bool)
     assert 0.0 <= verdicts["W-C"]["oracle_accuracy"] <= 1.0
+
+
+def test_smoke_profile_resumes_from_partial(tmp_path: Path) -> None:
+    from weather_world_model.worlds.run_qg import run
+
+    first = run("smoke")
+    partial = tmp_path / "qg-smoke.partial.json"
+    partial.write_text(json.dumps({k: v for k, v in first.items() if k != "verdicts"}))
+    resumed = run("smoke", partial=partial)
+    assert resumed["resumed"] is True
+    assert resumed["seeds"] == first["seeds"]
