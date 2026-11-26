@@ -2,6 +2,10 @@
 
 Run: ``uv run python -m weather_world_model.calibration.run --out results/calibration``.
 Each run writes one JSON record (code commit, date, configuration, per-seed values, verdicts).
+
+With ``--stochastic`` the run measures hypothesis L-S of protocol amendment 3 instead (a
+stochastic predictor on Lorenz-96 next to the deterministic one-step model) and writes
+``calibration-stochastic[-<profile>].json``.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ from weather_world_model.diagnostics.arrow import (
 )
 from weather_world_model.diagnostics.modes import fit_dmd
 from weather_world_model.diagnostics.predictability import (
+    ensemble_spread_curve,
     growth_rate,
     normalised,
     saturation_distance,
@@ -47,6 +52,8 @@ from weather_world_model.seeding import seed_everything
 FloatArray = NDArray[np.float64]
 SAMPLE_DT = 0.05  # Lorenz-96 time units between two frames (protocol 3.1)
 GROWTH_CEILING = 0.3  # growth window ends before the normalised separation reaches this
+NOISE_DIM = 8  # noise dimension of the stochastic predictor (protocol amendment 3)
+ENSEMBLE_MEMBERS = 8  # members of the ensemble whose spread is reported
 
 
 @dataclass(frozen=True)
@@ -135,8 +142,65 @@ def _growth(curve: FloatArray, saturation: float) -> dict[str, Any]:
     }
 
 
-def calibrate_predictability(profile: Profile, seed: int) -> dict[str, Any]:
-    """H0-A: growth rate of latent separation vs the leading Lyapunov exponent of Lorenz-96."""
+def _safe_growth(curve: FloatArray, saturation: float) -> dict[str, Any]:
+    """As :func:`_growth`, but a curve with no fittable window gives a null rate, not an error."""
+    norm = normalised(curve, saturation)
+    try:
+        window = growth_window(norm)
+        rate: float | None = growth_rate(curve, dt=SAMPLE_DT, window=window)
+    except ValueError as err:  # saturates before step 3, or not positive over the window
+        return {
+            "growth_rate": None,
+            "window": None,
+            "error": str(err),
+            "normalised_curve": [float(v) for v in norm],
+        }
+    return {
+        "growth_rate": rate,
+        "window": list(window),
+        "normalised_curve": [float(v) for v in norm],
+    }
+
+
+def stochastic_predictability(
+    model: SequenceJEPA, frames: FloatArray, mean: float, std: float, profile: Profile, seed: int
+) -> dict[str, Any]:
+    """Sensitivity (twin rollouts sharing one noise sequence) and ensemble spread of a
+    stochastic predictor, with the growth-window rule of diagnostic A."""
+    rng = np.random.default_rng([seed, 1])
+    generator = torch.Generator().manual_seed(seed)
+    k, noise_dim = profile.rollout_k, model.config.noise_dim
+    encode = _encoder(model, mean, std)
+    shared = torch.randn((frames.shape[0], k, noise_dim), generator=generator)
+
+    def shared_rollout(z0: FloatArray, steps: int) -> FloatArray:
+        out = model.rollout(torch.as_tensor(z0, dtype=torch.float32), steps, noise=shared)
+        return np.asarray(out.numpy(), dtype=np.float64)
+
+    def sampled_rollout(z0: FloatArray, steps: int) -> FloatArray:
+        out = model.rollout(torch.as_tensor(z0, dtype=torch.float32), steps, generator=generator)
+        return np.asarray(out.numpy(), dtype=np.float64)
+
+    z0 = encode(frames)
+    saturation = saturation_distance(z0, rng)
+    result: dict[str, Any] = {"saturation_distance": saturation}
+    for eps in (1e-3, 1e-2):
+        curve = separation_curve(encode, shared_rollout, frames, epsilon=eps, k=k, rng=rng)
+        result[f"sensitivity_eps{eps:g}"] = _safe_growth(curve, saturation)
+    spread = ensemble_spread_curve(sampled_rollout, z0, k=k, n_members=ENSEMBLE_MEMBERS)
+    result["spread"] = _safe_growth(spread, saturation)
+    return result
+
+
+def calibrate_predictability(
+    profile: Profile, seed: int, *, stochastic: bool = False
+) -> dict[str, Any]:
+    """H0-A: growth rate of latent separation vs the leading Lyapunov exponent of Lorenz-96.
+
+    With ``stochastic``, a second model with a stochastic predictor (same encoder
+    architecture, data, steps and seed) is trained and measured under ``"stochastic"``
+    (hypothesis L-S); the deterministic values are unchanged by it.
+    """
     rng = seed_everything(seed)
     reference = leading_lyapunov_lorenz96(n_steps=profile.reference_steps, burn_in=5000, rng=rng)
     train = simulate_lorenz96_batch(profile.n_trajectories, profile.n_steps, rng=rng)
@@ -164,6 +228,16 @@ def calibrate_predictability(profile: Profile, seed: int) -> dict[str, Any]:
         )
         result[f"jepa_eps{eps:g}"] = _growth(jepa_curve, saturation_distance(encode(frames), rng))
         result[f"oracle_eps{eps:g}"] = _growth(oracle_curve, saturation_distance(frames, rng))
+    if stochastic:
+        noisy_cfg = JEPAConfig(input_dim=train.shape[2], noise_dim=NOISE_DIM)
+        noisy, noisy_history = train_jepa(
+            (train - mean) / std, noisy_cfg, n_steps=profile.train_steps, seed=seed
+        )
+        result["stochastic"] = {
+            "collapsed": noisy_history.collapsed,
+            "final_latent_std": noisy_history.latent_std[-1],
+            **stochastic_predictability(noisy, frames, mean, std, profile, seed),
+        }
     return result
 
 
@@ -293,6 +367,55 @@ def verdicts(runs: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     }
 
 
+def _rel_err(value: float | None, truth: float) -> float | None:
+    return None if value is None else abs(value - truth) / abs(truth)
+
+
+def verdict_stochastic(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    """L-S (protocol amendment 3), at epsilon = 1e-3 as for H0-A, required for every seed:
+    the sensitivity growth rate of the stochastic model is within 30 % of the leading
+    Lyapunov exponent and closer to it than the deterministic one-step model."""
+    key = "eps0.001"
+    reference = [r["reference_lyapunov"] for r in runs]
+    det = [r[f"jepa_{key}"]["growth_rate"] for r in runs]
+    sens = [r["stochastic"][f"sensitivity_{key}"]["growth_rate"] for r in runs]
+    det_err = [_rel_err(d, ref) for d, ref in zip(det, reference, strict=True)]
+    sens_err = [_rel_err(s, ref) for s, ref in zip(sens, reference, strict=True)]
+    supported = all(
+        se is not None and se <= 0.30 and (de is None or se < de)
+        for se, de in zip(sens_err, det_err, strict=True)
+    )
+    return {
+        "epsilon": 1e-3,
+        "reference_lyapunov": reference,
+        "deterministic_growth_rate": det,
+        "stochastic_sensitivity_growth_rate": sens,
+        "stochastic_spread_growth_rate": [r["stochastic"]["spread"]["growth_rate"] for r in runs],
+        "deterministic_relative_error": det_err,
+        "stochastic_relative_error": sens_err,
+        "supported": supported,
+    }
+
+
+def run_stochastic(profile_name: str) -> dict[str, Any]:
+    """L-S: deterministic one-step and stochastic models on Lorenz-96 for every seed."""
+    profile = PROFILES[profile_name]
+    runs = [calibrate_predictability(profile, seed, stochastic=True) for seed in profile.seeds]
+    return {
+        "code_commit": _git_commit(),
+        "date": datetime.now(UTC).isoformat(timespec="seconds"),
+        "profile": profile_name,
+        "config": asdict(profile),
+        "noise_dim": NOISE_DIM,
+        "ensemble_members": ENSEMBLE_MEMBERS,
+        "sensitivity": "twin rollouts from clean and perturbed frames, same noise sequence",
+        "spread": "mean pairwise distance of members from one state, independent noise",
+        "torch_version": torch.__version__,
+        "runs": {"predictability": runs},
+        "verdicts": {"L-S": verdict_stochastic(runs)},
+    }
+
+
 def _git_commit() -> str:
     try:
         out = subprocess.run(
@@ -330,10 +453,18 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=sorted(PROFILES), default="full")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--stochastic", action="store_true", help="measure L-S (protocol amendment 3) instead"
+    )
     args = parser.parse_args(argv)
-    record = run(args.profile)
     args.out.mkdir(parents=True, exist_ok=True)
-    path = args.out / f"calibration-{args.profile}.json"
+    if args.stochastic:
+        record = run_stochastic(args.profile)
+        suffix = "" if args.profile == "full" else f"-{args.profile}"
+        path = args.out / f"calibration-stochastic{suffix}.json"
+    else:
+        record = run(args.profile)
+        path = args.out / f"calibration-{args.profile}.json"
     path.write_text(json.dumps(record, indent=2) + "\n")
     print(json.dumps(record["verdicts"], indent=2))
 

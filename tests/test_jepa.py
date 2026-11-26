@@ -9,6 +9,7 @@ from weather_world_model.jepa import (
     SequenceJEPA,
     TrainHistory,
     encode_numpy,
+    energy_score,
     is_collapsed,
     mean_latent_std,
     train_jepa,
@@ -213,3 +214,111 @@ def test_new_config_validation() -> None:
     cfg = JEPAConfig(input_dim=4, rollout_steps=4)
     with pytest.raises(ValueError):
         train_jepa(np.zeros((2, 4, 4)), cfg, n_steps=1, seed=0)
+
+
+def test_deterministic_default_is_unchanged() -> None:
+    torch.manual_seed(0)
+    cfg = JEPAConfig(input_dim=4, latent_dim=8, hidden_dim=16)
+    assert cfg.noise_dim == 0
+    model = SequenceJEPA(cfg)
+    assert model.predictor[0].in_features == 8
+    x_t, x_next = torch.randn(16, 4), torch.randn(16, 4)
+    got, z = model.loss(x_t, x_next)
+    # The pre-noise formula, written out.
+    zz = model.encoder(x_t)
+    expected = torch.nn.functional.l1_loss(zz + model.predictor(zz), model.target_encoder(x_next))
+    std = torch.sqrt(zz.var(dim=0) + 1e-4)
+    expected = expected + cfg.var_weight * torch.relu(1.0 - std).mean()
+    zc = zz - zz.mean(dim=0)
+    cov = zc.T @ zc / 15
+    off = cov - torch.diag(torch.diag(cov))
+    expected = expected + cfg.cov_weight * off.pow(2).sum() / 8
+    torch.testing.assert_close(got, expected, rtol=0, atol=0)
+    torch.testing.assert_close(z, zz, rtol=0, atol=0)
+    with pytest.raises(ValueError, match="takes no noise"):
+        model.predict_step(z, noise=torch.zeros(16, 8))
+
+
+def test_energy_score_hand_computed() -> None:
+    p1 = torch.tensor([[1.0, 0.0]])
+    p2 = torch.tensor([[0.0, 2.0]])
+    target = torch.zeros(1, 2)
+    # (1 + 2) / 2 - sqrt(5) / 2
+    torch.testing.assert_close(energy_score(p1, p2, target), torch.tensor(1.5 - 5**0.5 / 2))
+    # Identical predictions: the score is the plain distance to the target, with a finite gradient.
+    p = torch.tensor([[3.0, 4.0]], requires_grad=True)
+    score = energy_score(p, p, target)
+    torch.testing.assert_close(score, torch.tensor(5.0))
+    score.backward()  # type: ignore[no-untyped-call]
+    assert p.grad is not None and torch.isfinite(p.grad).all()
+
+
+def test_stochastic_config_and_noise_validation() -> None:
+    with pytest.raises(ValueError):
+        JEPAConfig(input_dim=4, noise_dim=-1)
+    with pytest.raises(ValueError, match="one-step"):
+        JEPAConfig(input_dim=4, noise_dim=8, rollout_steps=2)
+    model = SequenceJEPA(JEPAConfig(input_dim=4, latent_dim=8, hidden_dim=16, noise_dim=3))
+    assert model.predictor[0].in_features == 11
+    z = torch.randn(5, 8)
+    assert model.predict_step(z).shape == (5, 8)
+    with pytest.raises(ValueError, match="shape"):
+        model.predict_step(z, noise=torch.zeros(5, 2))
+    with pytest.raises(ValueError, match="needs a noise"):
+        model._step(z, None)
+    with pytest.raises(ValueError, match="noise must start"):
+        model.rollout(z, 4, noise=torch.zeros(5, 3, 3))
+    loss, _ = model.loss(torch.randn(5, 4), torch.randn(5, 4))
+    loss.backward()  # type: ignore[no-untyped-call]
+    assert all(p.grad is not None for p in model.predictor.parameters())
+
+
+def test_shared_noise_rollouts_are_identical() -> None:
+    torch.manual_seed(0)
+    model = SequenceJEPA(JEPAConfig(input_dim=4, latent_dim=8, hidden_dim=16, noise_dim=8))
+    z0 = torch.randn(6, 8)
+    noise = torch.randn(6, 10, 8)
+    a = model.rollout(z0, 10, noise=noise)
+    torch.testing.assert_close(a, model.rollout(z0.clone(), 10, noise=noise), rtol=0, atol=0)
+    g1, g2 = torch.Generator().manual_seed(5), torch.Generator().manual_seed(5)
+    b = model.rollout(z0, 10, generator=g1)
+    torch.testing.assert_close(b, model.rollout(z0, 10, generator=g2), rtol=0, atol=0)
+    # Independent noise gives different trajectories from the same start.
+    assert (model.rollout(z0, 10) - model.rollout(z0, 10)).abs().max() > 1e-4
+    torch.testing.assert_close(b[:, 0], z0)
+
+
+def test_stochastic_predictor_keeps_bimodal_spread() -> None:
+    # Next state = current state + s * a with s = +1 or -1 at random: two equally likely futures.
+    rng = np.random.default_rng(0)
+    d = 4
+    a = np.zeros(d)
+    a[0] = 3.0
+    x0 = rng.standard_normal((4000, d))
+    sign = rng.choice([-1.0, 1.0], size=(4000, 1))
+    seqs = np.stack([x0, x0 + sign * a], axis=1)
+    test = torch.as_tensor(rng.standard_normal((256, d)), dtype=torch.float32)
+    shift = torch.as_tensor(a, dtype=torch.float32)
+    ratios = {}
+    offsets = {}
+    for name, noise_dim in (("det", 0), ("stoch", 8)):
+        cfg = JEPAConfig(input_dim=d, latent_dim=8, hidden_dim=64, noise_dim=noise_dim)
+        model, hist = train_jepa(seqs, cfg, n_steps=1500, seed=0)
+        assert not hist.collapsed
+        with torch.no_grad():
+            t_plus = model.target_encoder(test + shift)
+            t_minus = model.target_encoder(test - shift)
+        half = (t_plus - t_minus).norm(dim=-1, keepdim=True) / 2
+        unit = (t_plus - t_minus) / (2 * half)
+        mid = (t_plus + t_minus) / 2
+        z = model.encode(test)
+        samples = torch.stack([model.predict_step(z) for _ in range(64)])  # (64, B, d)
+        proj = ((samples - mid) * unit).sum(dim=-1) / half.squeeze(-1)  # in half-distances
+        ratios[name] = float(proj.std(dim=0).mean()) if noise_dim else 0.0
+        offsets[name] = float(proj.mean(dim=0).abs().mean())
+    # Truth along the axis joining the two futures: mean 0, std 1 (in half-distances).
+    assert 0.6 < ratios["stoch"] < 1.4, ratios
+    assert offsets["stoch"] < 0.4, offsets
+    # The deterministic model returns one point between the two futures (any such point
+    # minimises the L1 error), so it has no spread at all.
+    assert offsets["det"] < 0.8, offsets

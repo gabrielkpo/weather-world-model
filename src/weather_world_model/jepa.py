@@ -8,6 +8,11 @@ gradients stopped. With ``rollout_steps = k > 1`` the predictor is applied autor
 ``k`` times in latent space and the loss averages the L1 errors against the target latents
 of ``x_{t+1} .. x_{t+k}``, with gradients flowing through the whole rollout. VICReg-style
 variance and covariance terms on the online latents guard against representational collapse.
+
+With ``noise_dim > 0`` the predictor is stochastic: it receives ``concat(z_t, eps)`` with
+``eps ~ N(0, I)`` and is trained (one-step only) with the two-sample energy score
+``mean_i ||z_hat_i - z*|| - 0.5 ||z_hat_1 - z_hat_2||`` (Euclidean norms) in place of the L1
+error. ``noise_dim = 0`` (default) is the deterministic model, unchanged.
 """
 
 import copy
@@ -44,6 +49,7 @@ class JEPAConfig:
     encoder: Literal["mlp", "conv"] = "mlp"
     input_shape: tuple[int, ...] | None = None
     conv_channels: tuple[int, ...] = (32, 64, 96, 128)
+    noise_dim: int = 0
 
     def __post_init__(self) -> None:
         if self.input_dim is None and self.input_shape is None:
@@ -55,6 +61,10 @@ class JEPAConfig:
                 raise ValueError("input_dim must equal the product of input_shape")
         if self.rollout_steps < 1:
             raise ValueError(f"rollout_steps must be >= 1, got {self.rollout_steps}")
+        if self.noise_dim < 0:
+            raise ValueError(f"noise_dim must be >= 0, got {self.noise_dim}")
+        if self.noise_dim > 0 and self.rollout_steps != 1:
+            raise ValueError("the stochastic predictor (noise_dim > 0) is trained one-step only")
         if self.rollout_weighting not in ("uniform", "linear"):
             raise ValueError(f"unknown rollout_weighting {self.rollout_weighting!r}")
         if self.encoder not in ("mlp", "conv"):
@@ -183,6 +193,21 @@ def _covariance_loss(z: Tensor) -> Tensor:
     return off.pow(2).sum() / d
 
 
+def energy_score(pred_1: Tensor, pred_2: Tensor, target: Tensor) -> Tensor:
+    """Two-sample energy score, averaged over the batch; inputs have shape ``(B, d)``.
+
+    ``mean_i ||pred_i - target|| - 0.5 ||pred_1 - pred_2||`` with Euclidean norms. It is a
+    proper score: its expectation is minimal when the predictions are distributed as the
+    target. A tiny constant under the square roots keeps the gradient finite at zero distance.
+    """
+
+    def norm(x: Tensor) -> Tensor:
+        return torch.sqrt(x.pow(2).sum(dim=-1) + 1e-12)
+
+    accuracy = 0.5 * (norm(pred_1 - target) + norm(pred_2 - target))
+    return (accuracy - 0.5 * norm(pred_1 - pred_2)).mean()
+
+
 class SequenceJEPA(nn.Module):
     """Online encoder, EMA target encoder and residual latent predictor."""
 
@@ -193,15 +218,41 @@ class SequenceJEPA(nn.Module):
         self.target_encoder = copy.deepcopy(self.encoder)
         for p in self.target_encoder.parameters():
             p.requires_grad_(False)
-        self.predictor = _mlp(config.latent_dim, config.hidden_dim, config.latent_dim)
+        self.predictor = _mlp(
+            config.latent_dim + config.noise_dim, config.hidden_dim, config.latent_dim
+        )
+
+    def _step(self, z: Tensor, noise: Tensor | None) -> Tensor:
+        if self.config.noise_dim == 0:
+            if noise is not None:
+                raise ValueError("a deterministic predictor (noise_dim = 0) takes no noise")
+            out: Tensor = z + self.predictor(z)
+            return out
+        if noise is None:
+            raise ValueError("a stochastic predictor needs a noise tensor")
+        expected = (*z.shape[:-1], self.config.noise_dim)
+        if tuple(noise.shape) != expected:
+            raise ValueError(f"noise must have shape {expected}, got {tuple(noise.shape)}")
+        out = z + self.predictor(torch.cat([z, noise.to(z)], dim=-1))
+        return out
+
+    def _draw(self, z: Tensor, generator: torch.Generator | None) -> Tensor | None:
+        if self.config.noise_dim == 0:
+            return None
+        shape = (*z.shape[:-1], self.config.noise_dim)
+        return torch.randn(shape, generator=generator).to(z)
 
     def loss(self, x_t: Tensor, x_next: Tensor) -> tuple[Tensor, Tensor]:
         """Return the total loss and the online latents of ``x_t`` (shape ``(B, d)``)."""
         z = self.encoder(x_t)
-        pred = z + self.predictor(z)
         with torch.no_grad():
             target = self.target_encoder(x_next)
-        total = nn.functional.l1_loss(pred, target)
+        if self.config.noise_dim > 0:
+            total = energy_score(
+                self._step(z, self._draw(z, None)), self._step(z, self._draw(z, None)), target
+            )
+        else:
+            total = nn.functional.l1_loss(self._step(z, None), target)
         if self.config.var_weight:
             total = total + self.config.var_weight * _variance_loss(z)
         if self.config.cov_weight:
@@ -233,7 +284,7 @@ class SequenceJEPA(nn.Module):
         pred = z
         total = z.new_zeros(())
         for j in range(k):
-            pred = pred + self.predictor(pred)
+            pred = self._step(pred, None)
             total = total + weights[j] * nn.functional.l1_loss(pred, targets[:, j])
         if self.config.var_weight:
             total = total + self.config.var_weight * _variance_loss(z)
@@ -258,19 +309,40 @@ class SequenceJEPA(nn.Module):
         return z
 
     @torch.no_grad()
-    def predict_step(self, z: Tensor) -> Tensor:
-        """One latent step ``z_t -> z_{t+1}``."""
-        out: Tensor = z + self.predictor(z)
-        return out
+    def predict_step(
+        self, z: Tensor, noise: Tensor | None = None, generator: torch.Generator | None = None
+    ) -> Tensor:
+        """One latent step ``z_t -> z_{t+1}``.
+
+        For a stochastic predictor, ``noise`` (shape ``(..., noise_dim)``) is used if given;
+        otherwise it is drawn from ``generator`` (the global generator if None).
+        """
+        if noise is None:
+            noise = self._draw(z, generator)
+        return self._step(z, noise)
 
     @torch.no_grad()
-    def rollout(self, z0: Tensor, k: int) -> Tensor:
-        """Autoregressive latent rollout; returns ``(B, k+1, d)`` with ``z0`` first."""
+    def rollout(
+        self,
+        z0: Tensor,
+        k: int,
+        noise: Tensor | None = None,
+        generator: torch.Generator | None = None,
+    ) -> Tensor:
+        """Autoregressive latent rollout; returns ``(B, k+1, d)`` with ``z0`` first.
+
+        For a stochastic predictor, ``noise`` of shape ``(B, k, noise_dim)`` fixes the noise
+        of every step, so that two rollouts given the same tensor share their noise sequence;
+        otherwise each step draws from ``generator`` (the global generator if None).
+        """
         if k < 0:
             raise ValueError(f"k must be non-negative, got {k}")
+        if noise is not None and tuple(noise.shape[:2]) != (z0.shape[0], k):
+            raise ValueError(f"noise must start with shape {(z0.shape[0], k)}")
         zs = [z0]
-        for _ in range(k):
-            zs.append(self.predict_step(zs[-1]))
+        for j in range(k):
+            step_noise = noise[:, j] if noise is not None else None
+            zs.append(self.predict_step(zs[-1], step_noise, generator))
         return torch.stack(zs, dim=1)
 
 
