@@ -50,6 +50,19 @@ def test_rank_projection_and_mode_amplitude() -> None:
     assert ratio == pytest.approx(1.1**10, rel=1e-3)
 
 
+def test_unit_eigenvalue_has_finite_fixed_point() -> None:
+    rng = np.random.default_rng(3)
+    a = np.diag([1.0, 0.5])
+    z = rng.standard_normal((50, 2)) + 10.0
+    res = fit_dmd(z, z @ a.T, rank=None)
+    assert np.all(np.abs(res.fixed_point) < 1e3)
+    traj = [np.array([10.0, 4.0])]
+    for _ in range(4):
+        traj.append(a @ traj[-1])
+    amp = project_on_mode(res, np.array(traj), 1)
+    np.testing.assert_allclose(np.abs(amp[1:] / amp[:-1]), 0.5, rtol=1e-6)
+
+
 def test_validation() -> None:
     with pytest.raises(ValueError):
         fit_dmd(np.zeros((5, 2)), np.zeros((5, 3)), rank=None)

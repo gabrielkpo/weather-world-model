@@ -52,3 +52,5 @@ def test_dataset_shapes_and_validation() -> None:
     assert f.shape == (5, 6) and y.shape == (5,)
     with pytest.raises(ValueError):
         arrow_of_time_dataset(np.zeros((5, 1, 2)), rng)
+    with pytest.raises(ValueError):
+        train_probe(f, 2 * y - 1, l2=0.0, seed=0)

@@ -20,7 +20,7 @@ class DMDResult:
     operator: NDArray[np.float64]  # (r, r)
     eigenvalues: NDArray[np.complex128]  # (r,), sorted by modulus descending
     modes: NDArray[np.complex128]  # (d, r), eigenvectors mapped back to latent space
-    r2: float
+    r2: float  # one-step R^2, measured in the (projected) reduced coordinates
     mean: NDArray[np.float64]  # (d,)
     basis: NDArray[np.float64]  # (d, r), orthonormal columns
     eigenvectors: NDArray[np.complex128]  # (r, r), in reduced coordinates
@@ -48,10 +48,8 @@ def fit_dmd(
     coef, *_ = np.linalg.lstsq(design, py, rcond=None)
     operator = coef[:-1].T
     intercept = coef[-1]
-    try:
-        fixed_point = np.linalg.solve(np.eye(operator.shape[0]) - operator, intercept)
-    except np.linalg.LinAlgError:
-        fixed_point = np.zeros(operator.shape[0])
+    # Least squares with a cutoff: directions where I - A is (near) singular get no offset.
+    fixed_point = np.linalg.lstsq(np.eye(operator.shape[0]) - operator, intercept, rcond=1e-8)[0]
     pred = design @ coef
     ss_res = float(np.sum((py - pred) ** 2))
     ss_tot = float(np.sum((py - py.mean(axis=0)) ** 2))

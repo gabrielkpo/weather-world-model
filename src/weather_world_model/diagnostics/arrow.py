@@ -55,6 +55,8 @@ def train_probe(
 ) -> LinearProbe:
     """Full-batch L-BFGS logistic regression with L2 penalty ``l2 * ||w||^2``."""
     seed_everything(seed)
+    if not np.isin(np.asarray(labels), (0, 1)).all():
+        raise ValueError("labels must be 0 or 1")
     x_np = np.asarray(features, dtype=np.float64)
     mean = x_np.mean(axis=0)
     scale = x_np.std(axis=0)

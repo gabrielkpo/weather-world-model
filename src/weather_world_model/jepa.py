@@ -37,6 +37,8 @@ class JEPAConfig:
     def __post_init__(self) -> None:
         if self.context_len != 1:
             raise ValueError("only context_len=1 (one frame per latent) is supported")
+        if self.log_every < 1 or self.batch_size < 1:
+            raise ValueError("log_every and batch_size must be positive")
         if not 0.0 <= self.ema_momentum <= 1.0:
             raise ValueError(f"ema_momentum must be in [0, 1], got {self.ema_momentum}")
 
@@ -64,8 +66,8 @@ def mean_latent_std(z: Tensor) -> float:
 
 
 def is_collapsed(latent_std: float, *, threshold: float = 1e-2) -> bool:
-    """Collapse detector: the latents barely vary across inputs."""
-    return latent_std < threshold
+    """Collapse detector: the latents barely vary across inputs (non-finite counts as collapse)."""
+    return not np.isfinite(latent_std) or latent_std < threshold
 
 
 def _mlp(in_dim: int, hidden_dim: int, out_dim: int) -> nn.Sequential:

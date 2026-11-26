@@ -53,6 +53,7 @@ def test_collapse_detector() -> None:
     hist = TrainHistory(latent_std=[1.0, 0.0])
     assert hist.collapsed
     assert not TrainHistory().collapsed
+    assert is_collapsed(float("nan"))
 
 
 def test_config_and_input_validation() -> None:
@@ -60,6 +61,8 @@ def test_config_and_input_validation() -> None:
         JEPAConfig(input_dim=4, context_len=2)
     with pytest.raises(ValueError):
         JEPAConfig(input_dim=4, ema_momentum=1.5)
+    with pytest.raises(ValueError):
+        JEPAConfig(input_dim=4, log_every=0)
     cfg = JEPAConfig(input_dim=4)
     with pytest.raises(ValueError):
         train_jepa(np.zeros((2, 5, 3)), cfg, n_steps=1, seed=0)
