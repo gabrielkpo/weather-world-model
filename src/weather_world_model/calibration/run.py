@@ -97,10 +97,16 @@ PROFILES: dict[str, Profile] = {
 
 
 def growth_window(norm_curve: FloatArray) -> tuple[int, int]:
-    """Steps 1 .. last step before the normalised separation reaches ``GROWTH_CEILING``."""
+    """Steps 1 .. last step before the normalised separation reaches ``GROWTH_CEILING``.
+
+    Raises ``ValueError`` when fewer than two steps stay below the ceiling: the separation
+    saturates too early for a slope to be fitted, and a smaller perturbation is needed.
+    """
     above = np.flatnonzero(norm_curve >= GROWTH_CEILING)
     end = int(above[0]) - 1 if above.size else len(norm_curve) - 1
-    return 1, max(end, 2)
+    if end < 2:
+        raise ValueError("separation saturates before step 3; use a smaller epsilon")
+    return 1, end
 
 
 def _encoder(model: SequenceJEPA, mean: float, std: float) -> Any:
@@ -161,13 +167,16 @@ def calibrate_predictability(profile: Profile, seed: int) -> dict[str, Any]:
     return result
 
 
-def _matched_moduli(estimated: NDArray[np.complex128], true: list[complex]) -> list[float]:
-    """Relative modulus error of each true eigenvalue against the closest estimate."""
-    errors = []
+def _matched(estimated: NDArray[np.complex128], true: list[complex]) -> dict[str, list[Any]]:
+    """For each true eigenvalue, the closest estimate's relative modulus error and whether it
+    stays on the same side of 1 (growth kept as growth, decay as decay)."""
+    errors: list[float] = []
+    same_side: list[bool] = []
     for lam in true:
         closest = estimated[np.argmin(np.abs(estimated - lam))]
         errors.append(float(abs(abs(closest) - abs(lam)) / abs(lam)))
-    return errors
+        same_side.append(bool((abs(closest) > 1) == (abs(lam) > 1)))
+    return {"relative_errors": errors, "growth_preserved": same_side}
 
 
 def calibrate_modes(profile: Profile, seed: int) -> dict[str, Any]:
@@ -194,12 +203,12 @@ def calibrate_modes(profile: Profile, seed: int) -> dict[str, Any]:
         "jepa": {
             "moduli": [float(abs(v)) for v in jepa.eigenvalues],
             "r2": jepa.r2,
-            "relative_errors": _matched_moduli(jepa.eigenvalues, true),
+            **_matched(jepa.eigenvalues, true),
         },
         "oracle": {
             "moduli": [float(abs(v)) for v in oracle.eigenvalues],
             "r2": oracle.r2,
-            "relative_errors": _matched_moduli(oracle.eigenvalues, true),
+            **_matched(oracle.eigenvalues, true),
         },
     }
 
@@ -269,7 +278,13 @@ def verdicts(runs: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     c_harm = [r["harmonic"]["jepa_asymmetry"] for r in runs["arrow"]]
     return {
         "H0-A": {"relative_error": _summary(a_err), "supported": max(a_err) <= 0.30},
-        "H0-B": {"max_relative_error": _summary(b_err), "supported": max(b_err) <= 0.10},
+        "H0-B": {
+            "max_relative_error": _summary(b_err),
+            "supported": max(b_err) <= 0.10,
+            "growth_preserved_all_seeds": all(
+                all(r["jepa"]["growth_preserved"]) for r in runs["modes"]
+            ),
+        },
         "H0-C": {
             "lorenz96_accuracy": _summary(c_l96),
             "harmonic_accuracy": _summary(c_harm),
