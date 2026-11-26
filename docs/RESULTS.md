@@ -32,3 +32,5 @@ H0-A is not supported, so, as written in the protocol, diagnostic A is not appli
 1. treat the contraction itself as the finding and measure it on the radar models with the oracle-validated code (the diagnostic is correct; the model is what fails);
 2. train the calibration JEPA with a multi-step rollout loss and check whether chaotic growth appears;
 3. drop diagnostic A.
+
+Decision (2026-11-26, protocol amendment 2): option 2 is taken. Every later model is trained with both a one-step and a multi-step latent rollout loss, the multi-step model is rerun on Lorenz-96, and diagnostic B is withdrawn.
