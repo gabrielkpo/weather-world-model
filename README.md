@@ -43,7 +43,9 @@ flowchart LR
 
 ### The model and how it is examined
 
-![Training and evaluation of the latent world model](docs/assets/architecture.svg)
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="Training and evaluation of the latent world model" width="100%">
+</p>
 
 The figure shows the stochastic variant; the deterministic model has no noise input and makes a single prediction.
 
