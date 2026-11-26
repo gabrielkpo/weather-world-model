@@ -70,3 +70,29 @@ def predictability_horizon(
     """First step where the normalised separation reaches ``threshold``, or None."""
     hits = np.flatnonzero(np.asarray(normalised_curve) >= threshold)
     return int(hits[0]) if hits.size else None
+
+
+def ensemble_spread_curve(
+    sample_rollout_fn: Callable[[FloatArray, int], FloatArray],
+    z0: NDArray[np.floating],
+    *,
+    k: int,
+    n_members: int = 8,
+) -> FloatArray:
+    """Spread of an ensemble started from identical states, shape ``(k+1,)``.
+
+    ``sample_rollout_fn`` maps ``((B, d), k) -> (B, k+1, d)`` and draws fresh noise at each
+    call. The spread at a step is the mean L2 distance between pairs of members, so that it
+    compares directly with the two-trajectory separation of :func:`separation_curve`; the
+    curve is its median over the batch. It is zero at step 0.
+    """
+    if n_members < 2:
+        raise ValueError("need at least two ensemble members")
+    start = np.asarray(z0, dtype=np.float64)
+    members = np.stack([sample_rollout_fn(start, k) for _ in range(n_members)])
+    total = np.zeros(members.shape[1:3])
+    for i in range(n_members):
+        for j in range(i + 1, n_members):
+            total += np.linalg.norm(members[i] - members[j], axis=-1)
+    pairs = n_members * (n_members - 1) / 2
+    return np.asarray(np.median(total / pairs, axis=0), dtype=np.float64)

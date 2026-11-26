@@ -54,3 +54,26 @@ def test_validation() -> None:
         growth_rate(np.ones(3), dt=1.0, window=(2, 1))
     with pytest.raises(ValueError):
         growth_rate(np.zeros(3), dt=1.0, window=(0, 2))
+
+
+def test_ensemble_spread_of_a_random_walk() -> None:
+    from weather_world_model.diagnostics.predictability import ensemble_spread_curve
+
+    rng = np.random.default_rng(0)
+
+    def walk(z0: np.ndarray, k: int) -> np.ndarray:
+        steps = rng.standard_normal((z0.shape[0], k, z0.shape[1]))
+        return np.concatenate([z0[:, None], z0[:, None] + np.cumsum(steps, axis=1)], axis=1)
+
+    curve = ensemble_spread_curve(walk, np.zeros((64, 16)), k=9, n_members=8)
+    assert curve.shape == (10,)
+    assert curve[0] == 0.0
+    # Two independent walks in d dims are sqrt(2 k d) apart after k steps.
+    np.testing.assert_allclose(curve[1:], np.sqrt(2 * 16 * np.arange(1, 10)), rtol=0.05)
+
+    def frozen(z0: np.ndarray, k: int) -> np.ndarray:
+        return np.repeat(z0[:, None], k + 1, axis=1)
+
+    assert np.all(ensemble_spread_curve(frozen, np.ones((4, 3)), k=5) == 0.0)
+    with pytest.raises(ValueError, match="two ensemble members"):
+        ensemble_spread_curve(frozen, np.ones((4, 3)), k=5, n_members=1)
