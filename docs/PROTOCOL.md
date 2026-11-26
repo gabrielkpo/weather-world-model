@@ -134,3 +134,24 @@ Hypotheses for step 2, stated before any run:
 | W-V | Pretraining on natural video helps on the QG world | V-JEPA 2 beats the small JEPA trained from scratch on W-C accuracy and on mean W-P R² by ≥ 0.05 |
 
 Radar hypotheses H1, H2, H4 and H5 are unchanged.
+
+### 3. 2026-11-26, after the first step-2 run finished and before its results were read
+
+Timing, stated plainly: the first run of step 2 (hypotheses W-A, W-C, W-P) had been launched and its run record was on disk when this amendment was written, but nobody had opened the record. The two additions below come from reasoning about the method, not from those results. The results of W-A, W-C and W-P are read and reported first, unchanged.
+
+**Rollout readouts (new hypothesis W-R).** W-P probes latents of real frames, so it evaluates the encoder only. To evaluate the learned dynamics, the probes fitted for W-P (on real-frame latents, unchanged) are applied to latents predicted by rolling the predictor out h = 1, 5 and 10 steps from the latent of frame t, and scored (R², test runs) against the simulator's true quantity at t + h. Control: persistence, the same probe applied to the latent of frame t as the estimate for t + h, because slowly varying quantities are well predicted by "no change".
+
+**Stochastic predictor (new hypotheses L-S and W-S).** A deterministic predictor trained on a distance to the target is pulled toward the centre of the possible futures, which contracts nearby trajectories. A stochastic variant is trained on Lorenz-96 and on the QG world: the predictor receives the latent and a noise vector ε ~ N(0, I) of dimension 8; each training step draws two predictions per input and minimises the energy score, mean_i ‖ẑ_i − z*‖ − ½ ‖ẑ_1 − ẑ_2‖ (Euclidean norms), plus the existing variance and covariance terms; one-step loss, same encoder, data, steps and seeds as the deterministic one-step model.
+
+Predictability of a stochastic model is measured in two ways, and only the first decides the hypotheses:
+
+1. *Sensitivity to initial conditions:* twin rollouts from the clean and perturbed initial states, driven by the same noise sequence; growth rate with the rule of diagnostic A.
+2. *Ensemble spread:* rollouts from the same initial state with independent noise sequences; spread growth, reported.
+
+| ID | Hypothesis | Criterion |
+|---|---|---|
+| W-R | The predictor carries the physics forward | at h = 10, mean over kinetic energy, available potential energy, enstrophy and jet speed of (R² of the rollout − R² of persistence) ≥ 0.05, for the one-step and the multi-step model; per-quantity values at h = 1, 5, 10 are reported |
+| L-S | A stochastic predictor restores chaotic error growth on Lorenz-96 | sensitivity growth rate within 30 % of the leading Lyapunov exponent, and closer to it than the deterministic one-step model |
+| W-S | Same on the QG world | sensitivity growth rate within 30 % of the simulator's twin-divergence growth rate, and closer to it than the deterministic one-step model |
+
+The stochastic models are also scored on W-C, W-P and W-R, reported without thresholds. The models of the first run were not saved, so W-R is measured on models retrained with the same configuration and seeds; trained weights are stored outside Git.
