@@ -18,15 +18,16 @@ Latent world models, in the line of JEPA and V-JEPA 2, predict how the world evo
 
 ```mermaid
 flowchart LR
-    subgraph S1[Step 1: proof of concept]
-        L96[Lorenz-96] --> JS1[small JEPA]
+    %% subgraphs are declared last to first: Mermaid stacks them in reverse order
+    subgraph S3[Step 3: real weather]
+        SEVIR[SEVIR radar] --> VJ3[V-JEPA 2 adapted]
     end
     subgraph S2[Step 2: wind world]
         QG[two-layer quasi-geostrophic atmosphere] --> JS2[small JEPA, one-step and multi-step]
         QG --> VJ2[V-JEPA 2 on wind video]
     end
-    subgraph S3[Step 3: real weather]
-        SEVIR[SEVIR radar] --> VJ3[V-JEPA 2 adapted]
+    subgraph S1[Step 1: proof of concept]
+        L96[Lorenz-96] --> JS1[small JEPA]
     end
     JS1 --> D[Diagnostics: predictability, arrow of time, readouts]
     JS2 --> D
