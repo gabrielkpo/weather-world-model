@@ -23,6 +23,7 @@ The calibration model is the small frame-level JEPA (MLP encoder, residual MLP p
 - **The diagnostics themselves work.** On the true systems, diagnostic A recovers the Lyapunov exponent, diagnostic B recovers the eigenvalues exactly, and diagnostic C separates irreversible from reversible dynamics.
 - **The small JEPA does not reproduce chaotic error growth.** Its latent rollouts barely diverge: after 120 steps (6 time units), the normalised separation stays below 0.002 of the saturation level, while the true system saturates after about 3 time units. The learned predictor is contractive. This matches what is reported for AI weather models and for learned Lorenz-96 emulators, whose error growth is too slow, and it is the question diagnostic A will ask of the radar models.
 - **The modes criterion passes, but the growth is lost.** Moduli are within 7.4 % of the truth, yet the growing pair (modulus 1.02) is estimated at 0.96 to 0.97: below one, so the latent dynamics damp a mode that grows. A criterion on modulus error alone hides this, so the run record now also states, for each mode, whether growth stays growth and decay stays decay (`growth_preserved`): the growing pair is lost in all three seeds, the decaying and near-unit pairs are kept.
+- *Caveat added on 2026-11-26 (protocol amendment 4):* on the QG world the same probe turned out to read the direction of wave propagation rather than irreversibility. Lorenz-96 waves also have a preferred direction and no mirrored control was run here, so the result below may reflect propagation only.
 - **The arrow of time is readable in the latent space,** with clip statistics that change sign under time reversal. The same probe on raw latent differences stays at chance (46 to 49 % on Lorenz-96), as expected for a stationary process.
 
 ### Consequence for the protocol
@@ -94,3 +95,18 @@ Ranges are minimum to maximum over the three seeds; verdicts use the worst seed.
 - **Multi-step training does not restore chaotic error growth; it makes it worse.** The simulator's twin errors grow at about 0.7 per time unit and reach 30 % of saturation after about 10 time units. The one-step model's latent separation grows at less than a third of that rate, and the 8-step model's separation does not grow at all (rates around zero, normalised separation below 0.001 after 15 time units). Neither latent curve reaches the 0.3 ceiling within the 150 steps, so their rates are fitted over the whole rollout. This repeats the Lorenz-96 finding: the learned predictors are contractive, and a rollout loss pushes them further towards smooth, non-diverging forecasts.
 - **The arrow of time is not readable at the 80 % level, but neither is it from the true fields.** The probe on the true wind fields (same PCA to 8 dimensions, same clips of 16 snapshots) reaches 76.5 %, and both models match it (75 to 79 %). The latents keep the time asymmetry that this probe can see in the data; the criterion fails because the probe itself tops out below 80 % on this world, not because the encoder loses information.
 - **Energies and enstrophy are linearly readable; the jet is not.** Kinetic energy, available potential energy and enstrophy are read with R² 0.70 to 0.87, well above the random-weight encoder (which already reaches 0.3 to 0.7, since a random convolutional net keeps much of the field's amplitude). The one-step model misses the kinetic-energy margin on one seed. Maximum zonal-mean jet speed is no better than random (about 0.4), so W-P fails for both models. Vortex count is barely readable (0.2).
+
+### Exploratory: what the arrow-of-time probe detects (protocol amendment 4)
+
+Not a protocol result. Record: [`results/exploratory/arrow-probe-qg.json`](../results/exploratory/arrow-probe-qg.json) (code commit `a00bd99`, true fields only, 120 new runs of 256 snapshots, 84 training and 36 test runs). Reproduce with `uv run python scripts/explore_arrow_probe.py --out results/exploratory`.
+
+| PCA components, clip length | Test clips | Plain reversal | Reversal + x-mirror |
+|---|---|---|---|
+| 8, 16 | 1 116 | 89.7 % | 49.0 % |
+| 8, 64 | 252 | 93.4 % | 51.5 % |
+| 32, 16 | 1 116 | 98.7 % | 47.0 % |
+| 32, 64 | 252 | 100 % | 45.8 % |
+
+- **The probe reads the direction of wave propagation, not irreversibility.** Keeping more components or longer clips lifts it from 90 % to 100 % against plain reversal, but it is at chance (43 to 55 % across the 16 settings of the record) once the reversed clip is mirrored in x (with v changing sign), which keeps the direction in which waves travel. The W-C numbers above therefore say that the latents keep the propagation direction, and nothing about irreversibility.
+- **The first run's 76.5 % ceiling is not explained.** With the protocol's sizes (56 training runs, 100 snapshots, 132 test clips) this analysis gives 86.9 % on true fields. The difference with the first run is to be traced (protocol amendment 4).
+- A diagnostic aimed at true irreversibility is to be defined in a later amendment.
