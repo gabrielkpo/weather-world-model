@@ -72,6 +72,28 @@ def _simulate(
     return out
 
 
+def integrate_lorenz96(
+    x0: FloatArray,
+    n_samples: int,
+    *,
+    forcing: float = 8.0,
+    dt: float = 0.01,
+    sample_every: int = 5,
+) -> FloatArray:
+    """Integrate from states ``x0`` ``(B, n)``; returns ``(B, n_samples + 1, n)``, ``x0`` first."""
+    _check_positive(dt=dt, sample_every=sample_every)
+    if n_samples < 0:
+        raise ValueError(f"n_samples must be non-negative, got {n_samples}")
+    x = np.asarray(x0, dtype=np.float64)
+    out = np.empty((x.shape[0], n_samples + 1, x.shape[1]), dtype=np.float64)
+    out[:, 0] = x
+    for t in range(1, n_samples + 1):
+        for _ in range(sample_every):
+            x = _rk4_step(x, forcing, dt)
+        out[:, t] = x
+    return out
+
+
 def simulate_lorenz96(
     n_steps: int,
     *,

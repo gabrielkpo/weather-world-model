@@ -102,4 +102,8 @@ Operational forecasting or warning, image generation, agents and planning, addit
 
 ## Amendments
 
-None yet.
+### 1. 2026-11-26, before the first calibration run
+
+- **Diagnostic C features for frame-level encoders.** The calibration JEPA encodes one frame at a time, so a clip has no single latent. A linear probe on raw latent sequences or on their differences cannot separate the two time directions of a statistically stationary process (both directions have the same mean). Clip features for frame-level encoders are therefore the clip averages of statistics that change sign exactly under time reversal: the antisymmetric lag-one covariance `z_t^i z_{t+1}^j - z_{t+1}^i z_t^j` (`i < j`) and the third-order asymmetry `z_t^i² z_{t+1}^i - z_t^i z_{t+1}^i²`, after a PCA to 8 dimensions fitted on the training clips. The difference features are reported alongside for transparency. Clip-level encoders (V-JEPA 2) keep the protocol as written.
+- **Diagnostic A growth window in calibration.** Steps 1 to the last step before the normalised separation reaches 0.3 (a fixed rule replaces the validation-tuned window on simulated data).
+- **Oracle baselines.** Each calibration also runs the diagnostic on the true system (identity encoder and true dynamics), to separate errors of the diagnostic code from errors of the learned model. Only the JEPA values decide H0.
