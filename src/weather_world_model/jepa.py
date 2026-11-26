@@ -12,6 +12,7 @@ variance and covariance terms on the online latents guard against representation
 
 import copy
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -301,11 +302,13 @@ def train_jepa(
     *,
     n_steps: int,
     seed: int,
+    progress: Callable[[int, float, float], None] | None = None,
 ) -> tuple[SequenceJEPA, TrainHistory]:
     """Train a :class:`SequenceJEPA` on ``sequences`` of shape ``(N, T, *frame_shape)``.
 
     Each step samples windows of ``rollout_steps + 1`` consecutive frames (pairs by default)
     uniformly over all sequences and start times, and minimises :meth:`SequenceJEPA.rollout_loss`.
+    ``progress(step, loss, latent_std)``, if given, is called at every logged step.
     """
     shape = config.frame_shape
     k = config.rollout_steps
@@ -339,4 +342,6 @@ def train_jepa(
             history.steps.append(step)
             history.loss.append(float(loss.detach()))
             history.latent_std.append(mean_latent_std(z))
+            if progress is not None:
+                progress(step, history.loss[-1], history.latent_std[-1])
     return model, history
