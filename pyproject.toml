@@ -56,4 +56,5 @@ follow_imports = "silent"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=weather_world_model --cov-report=term-missing --cov-fail-under=80"
+addopts = "-m 'not slow' --cov=weather_world_model --cov-report=term-missing --cov-fail-under=80"
+markers = ["slow: long-running calibration checks, excluded by default (run with -m slow)"]
