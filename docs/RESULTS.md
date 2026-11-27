@@ -17,7 +17,7 @@ Each record's `code_commit` is the last commit of the pull-request branch on whi
 | `results/qg/qg-stationary.json` | #25, report step 2 on a stationary QG flow (amendment 5) |
 | `results/exploratory/energy-readout-qg.json` | #26, show that GroupNorm erases the field amplitude the energy probes need |
 | `results/qg/qg-stationary-nonorm.json` | #34, step-2 rerun with an encoder without normalisation (amendment 6); produced on branch commit `bfa52fa` |
-| `results/qg/qg-vjepa2.json` | this pull request, frozen V-JEPA 2 on the QG world (W-V, amendment 2); produced on `main` commit `e760675` on a Kaggle T4 |
+| `results/qg/qg-vjepa2.json` | #35, frozen V-JEPA 2 on the QG world (W-V, amendment 2); produced on `main` commit `e760675` on a Kaggle T4 |
 | `results/exploratory/arrow-symmetry-vjepa2.json` | this pull request, arrow-of-time symmetry controls for frozen V-JEPA 2; produced on branch commit `1ec0f61` on a Kaggle T4 |
 
 Records carry no data hash and no bootstrap intervals; uncertainty is the minimum to maximum over seeds (protocol amendment 7).
