@@ -1,14 +1,19 @@
 [project]
 name = "weather-world-model"
 version = "0.1.0"
-description = "Probing a weather world model with dynamical-systems diagnostics"
+description = "Small JEPA world models on Lorenz-96 and a quasi-geostrophic atmosphere, probed for predictability, arrow of time and physical readouts against the simulators' exact answers"
 readme = "README.md"
 license = "MIT"
+authors = [{ name = "Gabriel Kpodoh" }]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "numpy>=2.1",
     "torch>=2.5",
 ]
+
+[project.urls]
+Homepage = "https://github.com/gabrielkpo/weather-world-model"
+Repository = "https://github.com/gabrielkpo/weather-world-model"
 
 [dependency-groups]
 dev = [
