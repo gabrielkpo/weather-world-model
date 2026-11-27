@@ -4,7 +4,7 @@
 
 Small JEPA world models on Lorenz-96 and a quasi-geostrophic atmosphere, probed for predictability, arrow of time and physical readouts against the simulators' exact answers.
 
-> **Status:** step 1 (Lorenz-96) done. Step 2 (quasi-geostrophic world) measured on a stationary flow, no hypothesis supported; a rerun without encoder normalisation is pending. Step 3 (SEVIR radar, V-JEPA 2) is planned. See the [roadmap](#status-and-roadmap).
+> **Status:** step 1 (Lorenz-96) done. Step 2 (quasi-geostrophic world) measured on a stationary flow, no hypothesis supported, with or without encoder normalisation. Step 3 (SEVIR radar, V-JEPA 2) is planned. See the [roadmap](#status-and-roadmap).
 
 ## Why
 
@@ -99,14 +99,14 @@ The diagnostics recover known answers; the small JEPA keeps the arrow of time, n
 Exploratory, not protocol results:
 
 - The arrow-of-time probe reads the direction of wave propagation, not irreversibility: it is at chance once the reversed clip is mirrored.
-- GroupNorm in the encoder erases the field amplitude: a random encoder reads kinetic energy at R² −0.03 to −0.02 with it, 0.70 to 0.83 without it. The rerun without normalisation (amendment 6) is pending.
+- GroupNorm in the encoder erases the field amplitude: a random encoder reads kinetic energy at R² −0.03 to −0.02 with it, 0.70 to 0.83 without it. The rerun without normalisation (amendment 6) supports no hypothesis either: trained encoders read kinetic energy at R² 0.20 to 0.66, below the random encoder, and the stochastic model collapses.
 
 ## Status and roadmap
 
 | Step | Content | State |
 |---|---|---|
 | 1 | Lorenz-96 proof of concept | done |
-| 2 | QG wind world, small JEPAs | done on a stationary flow with GroupNorm, no hypothesis supported; rerun without normalisation pending (amendment 6) |
+| 2 | QG wind world, small JEPAs | done on a stationary flow, with GroupNorm and without normalisation (amendment 6); no hypothesis supported |
 | 2b | Frozen V-JEPA 2 on the QG world (W-V) | prepared (adapter, Kaggle notebook), not run |
 | 3 | SEVIR radar, NOAA Storm Events, adapted V-JEPA 2 | planned |
 

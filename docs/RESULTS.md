@@ -16,8 +16,9 @@ Each record's `code_commit` is the last commit of the pull-request branch on whi
 | `results/qg/qg-energy-long.json` | #24, record QG data on a stationary flow (amendment 5) |
 | `results/qg/qg-stationary.json` | #25, report step 2 on a stationary QG flow (amendment 5) |
 | `results/exploratory/energy-readout-qg.json` | #26, show that GroupNorm erases the field amplitude the energy probes need |
+| `results/qg/qg-stationary-nonorm.json` | this pull request, step-2 rerun with an encoder without normalisation (amendment 6); produced on branch commit `bfa52fa` |
 
-Records carry no data hash and no bootstrap intervals; uncertainty is the minimum to maximum over seeds (protocol amendment 7). The step-2 rerun with an encoder without normalisation (amendment 6) is pending; its record is not in the repository yet.
+Records carry no data hash and no bootstrap intervals; uncertainty is the minimum to maximum over seeds (protocol amendment 7).
 
 ## Step 1: Lorenz-96 proof of concept
 
@@ -256,6 +257,23 @@ Not a protocol result. Record: [`results/exploratory/arrow-probe-qg.json`](../re
 - **The probe reads the direction of wave propagation, not irreversibility.** Keeping more components or longer clips lifts it from 90 % to 100 % against plain reversal, but it is at chance (43 to 55 % across the 16 settings of the record) once the reversed clip is mirrored in x (with v changing sign), which keeps the direction in which waves travel. The W-C numbers above therefore say that the latents keep the propagation direction, and nothing about irreversibility.
 - **The first run's 76.5 % ceiling is not explained.** With the protocol's sizes (56 training runs, 100 snapshots, 132 test clips) this analysis gives 86.9 % on true fields. The difference with the first run is to be traced (protocol amendment 4).
 - A diagnostic aimed at true irreversibility is to be defined in a later amendment.
+
+### Rerun without encoder normalisation (amendment 6)
+
+Run record: [`results/qg/qg-stationary-nonorm.json`](../results/qg/qg-stationary-nonorm.json) (code commit `bfa52fa`, profile `full`, `conv_norm: "none"`, seeds 0, 1, 2, CPU, 2 h 21 min of compute, stationarity check passed). Same data and protocol as above; only the encoder normalisation changes. Values are the minimum to maximum over the three seeds.
+
+| Hypothesis | Result | Supported |
+|---|---|---|
+| W-A, growth rate (truth 0.96) | k1 0.28 to 0.44; k8 −0.12 to 0.00 | no |
+| W-C, arrow of time, plain / mirrored | k1 62 to 74 % / 48 to 52 %; k8 63 to 82 % / 52 to 59 % | no |
+| W-P, kinetic energy R², trained / random encoder | k1 0.20 to 0.46; k8 0.40 to 0.66 / 0.70 to 0.83 | no |
+| W-P, enstrophy R², trained / random encoder | k1 0.28 to 0.49; k8 0.38 to 0.67 / 0.66 to 0.80 | no |
+| W-R, mean gain over persistence at h=10 | k1 −4.1 to −0.73; k8 −0.20 to −0.07 | no |
+| W-S, stochastic sensitivity | stochastic model collapsed (see below) | no |
+
+- **Without normalisation, energies become readable, but the trained encoders read them worse than random weights.** This confirms on three seeds the exploratory result below: JEPA training discards part of the amplitude information. The multi-step model (k8) keeps more of it than the one-step model.
+- **The stochastic model collapsed on all three seeds** (latent standard deviation below the 1e-2 threshold, loss flat near 0.99). Its readouts (`stochastic_reported` in the record, for example kinetic energy R² 0.76 to 0.87) are therefore not interpreted, and W-S is not tested in this configuration. The deterministic k1 and k8 models did not collapse.
+- The arrow-of-time probe again falls to chance on the mirrored control: it reads the propagation direction, not irreversibility.
 
 ### Exploratory: why energies are not readable on the stationary flow
 
