@@ -31,7 +31,8 @@ from weather_world_model.diagnostics.arrow import (
 from weather_world_model.worlds.qg import QGConfig, simulate_snapshots
 
 FloatArray = NDArray[np.float64]
-N_RUNS, N_SNAPSHOTS, SAMPLE_EVERY, SPIN_UP = 120, 256, 20, 4000
+N_RUNS, N_SNAPSHOTS, SAMPLE_EVERY = 120, 256, 20
+SPIN_UP = 12000  # 60 time units: the flow is stationary (protocol amendment 5)
 N_TRAIN_RUNS = 84
 L2 = 1e-3  # the protocol's probe regularisation
 PROBE_SEEDS = (0, 1, 2)

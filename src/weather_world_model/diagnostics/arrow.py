@@ -41,13 +41,22 @@ def arrow_of_time_dataset(
     rng: np.random.Generator,
     *,
     features: FeatureSet = "differences",
+    reversed_from: NDArray[np.floating] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
-    """Reverse each ``(T, d)`` sequence with probability 1/2; label 1 = forward, 0 = reversed."""
+    """Reverse each ``(T, d)`` sequence with probability 1/2; label 1 = forward, 0 = reversed.
+
+    With ``reversed_from`` (same shape), the reversed version of sequence ``i`` is read from
+    that array instead: this is how a transformed copy (for instance the x-mirrored fields)
+    is used as the "reversed" class while the forward class stays untouched.
+    """
     seqs = np.asarray(latent_sequences, dtype=np.float64)
     if seqs.ndim != 3 or seqs.shape[1] < 2:
         raise ValueError(f"expected (N, T>=2, d), got {seqs.shape}")
+    source = seqs if reversed_from is None else np.asarray(reversed_from, dtype=np.float64)
+    if source.shape != seqs.shape:
+        raise ValueError(f"reversed_from must have shape {seqs.shape}, got {source.shape}")
     labels = rng.integers(0, 2, size=seqs.shape[0]).astype(np.int64)
-    oriented = np.where(labels[:, None, None] == 1, seqs, seqs[:, ::-1])
+    oriented = np.where(labels[:, None, None] == 1, seqs, source[:, ::-1])
     if features == "asymmetry":
         return time_asymmetry_features(oriented), labels
     return np.diff(oriented, axis=1).reshape(seqs.shape[0], -1), labels
