@@ -8,9 +8,12 @@ fixes the rendering, the pooling and the probes.
 
 The notebook installs the package in one of two modes, set in its first code cell:
 
-- `INSTALL_MODE = "git"`: `pip install git+https://github.com/gabrielkpo/weather-world-model@<commit>`.
-  Only works once the repository is public; set `GIT_COMMIT` to the full SHA to measure.
-- `INSTALL_MODE = "wheel"` (default): installs a wheel from a private Kaggle dataset. Steps below.
+- `INSTALL_MODE = "git"` (default): `pip install git+https://github.com/gabrielkpo/weather-world-model@<commit>`
+  from the public repository. Set `GIT_COMMIT` to the full 40-character SHA of the commit to measure;
+  the cell stops on anything else (a branch name or a short SHA). No dataset is needed: create the
+  notebook (step 3 below), apply the settings (step 5), run, and download the record (steps 6 to 8).
+- `INSTALL_MODE = "wheel"`: installs a wheel from a private Kaggle dataset, for a commit that is not
+  public. Steps below.
 
 ## Steps (mode "wheel")
 
