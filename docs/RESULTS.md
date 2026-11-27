@@ -19,6 +19,7 @@ Each record's `code_commit` is the last commit of the pull-request branch on whi
 | `results/qg/qg-stationary-nonorm.json` | #34, step-2 rerun with an encoder without normalisation (amendment 6); produced on branch commit `bfa52fa` |
 | `results/qg/qg-vjepa2.json` | #35, frozen V-JEPA 2 on the QG world (W-V, amendment 2); produced on `main` commit `e760675` on a Kaggle T4 |
 | `results/exploratory/arrow-symmetry-vjepa2.json` | this pull request, arrow-of-time symmetry controls for frozen V-JEPA 2; produced on branch commit `1ec0f61` on a Kaggle T4 |
+| `results/exploratory/arrow-symmetry-vjepa2-waves-damped_waves.json` | this pull request, reversible and damped wave controls of amendment 8; produced on branch commit `c81fb08` on a Kaggle T4 |
 
 Records carry no data hash and no bootstrap intervals; uncertainty is the minimum to maximum over seeds (protocol amendment 7).
 
@@ -308,7 +309,25 @@ Not a protocol result. Record: [`results/exploratory/arrow-symmetry-vjepa2.json`
 
 - **The mirrored-control result is an artefact.** Both encoders tell a mirrored clip from a plain one with time unchanged (94 to 100 %), and the random-weight encoder, which reads no time direction at all (44 to 49 % on plain reversal), still scores 92 to 96 % on the mirrored control.
 - **A time-direction signal remains once spatial cues are removed.** With every clip of both classes turned by an independent random rotation or reflection (wind vector included), the pretrained encoder reads the time direction at 80 to 88 %, the random-weight encoder is at chance, and frozen clips are at chance, so the signal is in the motion and comes from pretraining.
-- **It is not shown to be irreversibility.** Random symmetries remove the absolute orientation but keep how the flow moves relative to its own structure (for example waves travelling against the jet). A reversible flow rendered the same way would be the control that separates the two; it is not run.
+- **It is not shown to be irreversibility.** Random symmetries remove the absolute orientation but keep how the flow moves relative to its own structure (for example waves travelling against the jet). A reversible flow rendered the same way would be the control that separates the two; it is run below (amendment 8).
+
+### Exploratory: reversible and damped wave controls (amendment 8)
+
+Not a protocol result. Record: [`results/exploratory/arrow-symmetry-vjepa2-waves-damped_waves.json`](../results/exploratory/arrow-symmetry-vjepa2-waves-damped_waves.json) (code commit `c81fb08`, Kaggle Tesla T4, 2 h 38 min). Same rendering, clips and probes as above, on free linear Rossby waves (reversible) and on the same waves damped by `exp(-0.2 t)`. Criteria fixed in amendment 8 before the run.
+
+| Probe | Reversible waves, pretrained | Reversible waves, random weights | Damped waves, pretrained | Damped waves, random weights |
+|---|---|---|---|---|
+| Plain | 100 % | 42 to 50 % | 100 % | 97 to 98 % |
+| Mirrored control | 55 to 67 % | 44 to 50 % | 100 % | 94 to 96 % |
+| Mirror only | 98 to 100 % | 46 to 51 % | 100 % | 54 to 58 % |
+| Random symmetries | **45 to 53 %** | 45 to 58 % | **99 %** | 94 to 97 % |
+| Random symmetries, frozen clips | 51 to 52 % | 47 to 55 % | 52 to 58 % | 50 to 58 % |
+
+- **The pipeline is clean** (criterion: every probe seed at most 55 % on reversible waves under random symmetries): 45 to 53 %. The random-symmetry control removes every cue that does not come from the time direction.
+- **The encoder detects dissipation** (criterion: at least 60 % on damped waves): 99 %. So does the random-weight encoder (94 to 97 %): a decaying amplitude is easy to read.
+- **Reading of the QG result.** Both criteria hold, so the 80 to 88 % of the pretrained encoder on the QG flow under random symmetries is compatible with reading irreversibility, as amendment 8 states. It is not a simple amplitude trend: the QG flow is stationary, and the random-weight encoder, which reads damping at 94 to 97 %, is at chance on the QG flow.
+- On plain reversal both pretrained results are 100 %: the propagation direction of the waves is readable, as expected for Rossby waves.
+
 
 ### Exploratory: why energies are not readable on the stationary flow
 
