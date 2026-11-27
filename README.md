@@ -125,6 +125,8 @@ It writes `results/calibration/calibration-full.json` and prints the verdicts.
 | `src/weather_world_model/calibration/` | Lorenz-96, linear and reversible oscillators, calibration runner |
 | `src/weather_world_model/jepa.py` | small sequence JEPA (encoder, predictor, EMA target, variance-covariance terms) |
 | `src/weather_world_model/diagnostics/` | predictability, DMD modes, arrow-of-time probe |
+| `src/weather_world_model/worlds/` | two-layer QG world, step-2 runner, V-JEPA 2 adapter (W-V) |
+| `notebooks/` | Kaggle GPU notebook for the frozen V-JEPA 2 measurement, see [docs/KAGGLE.md](docs/KAGGLE.md) |
 | `docs/` | frozen protocol and results |
 | `results/` | versioned run records |
 
