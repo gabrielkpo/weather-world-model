@@ -38,7 +38,8 @@ def test_smoke_run_writes_a_record(tmp_path: Path) -> None:
     assert set(record["verdicts"]) == {"H0-A", "H0-B", "H0-C"}
     assert len(record["runs"]["predictability"]) == 1
     assert record["runs"]["predictability"][0]["reference_lyapunov"] > 0
-    assert isinstance(record["code_dirty"], bool)
+    # Outside a Git checkout (a source archive) provenance is ("unknown", None)
+    assert isinstance(record["code_dirty"], bool) or record["code_commit"] == "unknown"
     assert len(record["runs"]["predictability"][0]["data_sha256"]) == 64
     assert len(record["runs"]["modes"][0]["data_sha256"]) == 64
     arrow = record["runs"]["arrow"][0]

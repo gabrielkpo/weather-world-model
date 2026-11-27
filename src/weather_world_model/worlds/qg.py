@@ -46,7 +46,7 @@ deformation radius is resolved by ~2.5 grid points:
   AB3 stability range,
 * ``init_amplitude = 0.5`` (white noise on q) skips the slow linear phase; the flow is
   statistically stationary after ~2000 steps (``t ≈ 10``), spin-ups of 10 000 steps are
-  used in the tests and preview. 10 000 steps take ~3 s on an M1 CPU.
+  used in the tests and preview. 10 000 steps take ~3 s on a laptop CPU.
 
 Velocities returned by :meth:`QGModel.velocity` are the eddy (anomaly) winds
 ``u = -∂ψ/∂y``, ``v = ∂ψ/∂x``; the uniform background ``U_k`` is not added.

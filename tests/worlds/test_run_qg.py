@@ -51,10 +51,12 @@ def test_smoke_profile_writes_record(tmp_path: Path) -> None:
     assert "accuracy_mirrored_control" in verdicts["W-C"]["k8"]
     assert record["stationarity"]["passes"] is None  # the smoke profile only reports it
     assert record["stationarity"]["relative_difference"] >= 0.0
-    assert isinstance(record["code_dirty"], bool)
+    # Outside a Git checkout (a source archive) provenance is ("unknown", None)
+    assert isinstance(record["code_dirty"], bool) or record["code_commit"] == "unknown"
     assert len(record["data_sha256"]) == 64
     assert seed["code_commit"] == record["code_commit"]
-    assert isinstance(seed["code_dirty"], bool)
+    # Outside a Git checkout (a source archive) provenance is ("unknown", None)
+    assert isinstance(seed["code_dirty"], bool) or seed["code_commit"] == "unknown"
 
 
 def test_smoke_profile_resumes_from_partial(tmp_path: Path) -> None:
