@@ -35,6 +35,10 @@ import torch
 from weather_world_model.records import provenance
 from weather_world_model.worlds import run_qg
 from weather_world_model.worlds import vjepa2_qg as vq
+from weather_world_model.worlds.waves import wave_runs
+
+WORLDS = ("qg", "waves", "damped_waves")
+WAVE_DAMPING = 0.2  # amendment 8: the wave energy falls by 1 - exp(-0.4 * 1.5), 45 %, over a clip
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -42,6 +46,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, default=Path("results/exploratory"))
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--worlds",
+        nargs="+",
+        choices=WORLDS,
+        default=["qg"],
+        help="qg: the QG world; waves: reversible Rossby waves; damped_waves: the same, damped",
+    )
     args = parser.parse_args(argv)
 
     from transformers import (  # type: ignore[import-not-found]  # not a dependency: GPU only
@@ -61,12 +72,23 @@ def main(argv: list[str] | None = None) -> None:
 
     profile_name = "smoke" if args.dry_run else "full"
     profile = run_qg.PROFILES[profile_name]
-    data = run_qg.simulate(profile)
-    fields = {
-        k: vq.physical(data.frames[k], data.mean, data.std).astype(np.float32)
-        for k in ("train", "test")
-    }
-    log(f"simulated { ({k: v.shape for k, v in fields.items()}) }")
+    worlds: dict[str, dict[str, np.ndarray]] = {}
+    for world in args.worlds:
+        if world == "qg":
+            data = run_qg.simulate(profile)
+            worlds[world] = {
+                k: vq.physical(data.frames[k], data.mean, data.std).astype(np.float32)
+                for k in ("train", "test")
+            }
+        else:
+            n_train, _, n_test = run_qg.split_sizes(profile.n_runs)
+            rng = np.random.default_rng([profile.data_seed, WORLDS.index(world)])
+            damping = WAVE_DAMPING if world == "damped_waves" else 0.0
+            worlds[world] = {
+                split: wave_runs(n, profile.snapshots, rng=rng, damping=damping)
+                for split, n in (("train", n_train), ("test", n_test))
+            }
+        log(f"{world}: { ({k: v.shape for k, v in worlds[world].items()}) }")
 
     if args.dry_run:
         torch.manual_seed(0)
@@ -105,12 +127,15 @@ def main(argv: list[str] | None = None) -> None:
             del model
             torch.manual_seed(0)
             model = VJEPA2Model(cfg).to(device=device, dtype=dtype).eval()
-        t = time.perf_counter()
-        results[name] = vq.symmetry_controls(
-            encoder_of(model), fields, spec, batch_size=args.batch_size, device=device, log=log
-        )
-        seconds[name] = time.perf_counter() - t
-        log(json.dumps({k: v for k, v in results[name].items() if isinstance(v, dict)}))
+        for world, fields in worlds.items():
+            t = time.perf_counter()
+            res = vq.symmetry_controls(
+                encoder_of(model), fields, spec, batch_size=args.batch_size, device=device, log=log
+            )
+            key = name if args.worlds == ["qg"] else f"{world}/{name}"
+            results[key] = res
+            seconds[key] = time.perf_counter() - t
+            log(key + " " + json.dumps({k: v for k, v in res.items() if isinstance(v, dict)}))
 
     record = {
         **provenance(),
@@ -120,6 +145,8 @@ def main(argv: list[str] | None = None) -> None:
         "model_revision": None if args.dry_run else vq.MODEL_REVISION,
         "profile": profile_name,
         "data_seed": profile.data_seed,
+        "worlds": args.worlds,
+        "wave_damping": WAVE_DAMPING,
         "video": {
             "image_size": spec.image_size,
             "clip_len": spec.clip_len,
@@ -135,7 +162,8 @@ def main(argv: list[str] | None = None) -> None:
         **results,
     }
     args.out.mkdir(parents=True, exist_ok=True)
-    path = args.out / ("arrow-symmetry-vjepa2" + ("-dry-run" if args.dry_run else "") + ".json")
+    stem = "arrow-symmetry-vjepa2" + ("" if args.worlds == ["qg"] else "-" + "-".join(args.worlds))
+    path = args.out / (stem + ("-dry-run" if args.dry_run else "") + ".json")
     path.write_text(json.dumps(record, indent=2) + "\n")
     log(f"wrote {path}")
 

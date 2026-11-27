@@ -204,3 +204,17 @@ Changes:
 - Uncertainty is reported as per-seed values and the minimum to maximum over seeds, and verdicts use the worst seed. Bootstrap intervals are dropped: three seeds are what the compute budget allows, and an interval over three values would suggest a precision the runs do not have.
 - Data sources and their licences are listed in the Data section of the README. A `DATA.md` will be added with step 3, when real data enter the project.
 - Records written before this amendment are kept as they are.
+
+### 8. 2026-11-27, the mirrored control of W-C failed for a large video encoder
+
+**Finding.** The frozen V-JEPA 2 scored 98 to 100 % on the mirrored control of amendment 4, where every small JEPA is at chance. Exploratory symmetry controls (`scripts/explore_arrow_symmetry_vjepa2.py`, record `results/exploratory/arrow-symmetry-vjepa2.json`) showed why: only the reversed class is mirrored in that control, and both the pretrained and the random-weight encoder tell a mirrored clip from a plain one with time unchanged (94 to 100 %). With every clip of both classes turned by an independent random rotation or reflection of the square (grid and wind vector), the pretrained encoder still reads the time direction at 80 to 88 %, the random-weight encoder and frozen clips are at chance. Whether this signal comes from irreversibility or from how structures move is not tested.
+
+**Changes.**
+
+- For a clip-level encoder, W-C is reported with the random-symmetry control (`d4` in the records) next to the plain and mirrored probes; the mirrored control alone is not used to conclude.
+- Two synthetic control worlds, rendered and probed exactly as the QG world (`worlds/waves.py`, same grid, `beta = 6`, `F = 16`, one snapshot every 0.1 time units, wind standard deviation 1.3, 56 training and 12 test runs of 100 snapshots, data seed 1000):
+  - **reversible waves**: free linear Rossby waves, no dissipation. A time-reversed clip is a valid clip of the mirrored world, so under random symmetries both classes have the same distribution and no probe can beat chance except through an artefact of the pipeline;
+  - **damped waves**: the same waves with the field multiplied by `exp(-0.2 t)`, which no reflection undoes.
+- Criteria, fixed before the run, for the frozen V-JEPA 2 under random symmetries (three probe seeds): the pipeline is **clean** if every seed is at most 55 % on reversible waves; the encoder **detects dissipation** if every seed is at least 60 % on damped waves. The QG result (80 to 88 %) is read as compatible with irreversibility only if both hold; if the pipeline is not clean, the QG result is not interpreted. The random-weight encoder is reported for both worlds.
+- These controls are exploratory: they qualify the reading of W-C and W-V and change no verdict of the records already published.
+
