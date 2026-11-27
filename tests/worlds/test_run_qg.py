@@ -51,6 +51,10 @@ def test_smoke_profile_writes_record(tmp_path: Path) -> None:
     assert "accuracy_mirrored_control" in verdicts["W-C"]["k8"]
     assert record["stationarity"]["passes"] is None  # the smoke profile only reports it
     assert record["stationarity"]["relative_difference"] >= 0.0
+    assert isinstance(record["code_dirty"], bool)
+    assert len(record["data_sha256"]) == 64
+    assert seed["code_commit"] == record["code_commit"]
+    assert isinstance(seed["code_dirty"], bool)
 
 
 def test_smoke_profile_resumes_from_partial(tmp_path: Path) -> None:
@@ -58,10 +62,15 @@ def test_smoke_profile_resumes_from_partial(tmp_path: Path) -> None:
 
     first = run("smoke")
     partial = tmp_path / "qg-stationary-base-smoke.partial.json"
-    partial.write_text(json.dumps({k: v for k, v in first.items() if k != "verdicts"}))
+    previous = {k: v for k, v in first.items() if k != "verdicts"}
+    # A seed written by other code keeps its own provenance after the resume.
+    previous["seeds"] = [{**s, "code_commit": "0" * 40, "code_dirty": True} for s in first["seeds"]]
+    partial.write_text(json.dumps(previous))
     resumed = run("smoke", partial=partial)
     assert resumed["resumed"] is True
-    assert resumed["seeds"] == first["seeds"]
+    assert resumed["seeds"] == previous["seeds"]
+    assert resumed["data_sha256"] == first["data_sha256"]
+    assert resumed["truth"] == first["truth"]
 
 
 def test_amendment3_smoke_writes_record_and_reuses_checkpoints(
@@ -176,7 +185,9 @@ def test_run_stops_before_training_when_not_stationary(
     def no_training(*args: object, **kwargs: object) -> None:
         raise AssertionError("training must not start")
 
-    monkeypatch.setattr(run_qg, "train_jepa", no_training)
+    from weather_world_model.worlds import qg_eval
+
+    monkeypatch.setattr(qg_eval, "train_jepa", no_training)
     with pytest.raises(RuntimeError, match="not stationary"):
         run_qg.run("smoke", partial=tmp_path / "p.json")
     assert not (tmp_path / "p.json").exists()
@@ -242,7 +253,8 @@ def test_checkpoint_saved_before_a_config_field_existed_still_matches() -> None:
     from dataclasses import asdict
 
     from weather_world_model.jepa import JEPAConfig
-    from weather_world_model.worlds.run_qg import PROFILES, _plain, checkpoint_matches
+    from weather_world_model.worlds.qg_eval import _plain
+    from weather_world_model.worlds.run_qg import PROFILES, checkpoint_matches
 
     profile = PROFILES["smoke"]
     cfg = JEPAConfig(encoder="conv", input_shape=(2, 8, 8), conv_channels=(4, 8))
