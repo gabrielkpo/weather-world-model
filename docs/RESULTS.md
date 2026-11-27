@@ -64,6 +64,8 @@ Ensemble spread, as a fraction of the saturation distance (range over seeds): 0.
 
 ## Step 2: quasi-geostrophic world
 
+> **Superseded (protocol amendment 5, 2026-11-27).** The results of this section, including the exploratory analysis at the end, were measured on sequences recorded while the simulated flow was still spinning up (kinetic energy rising throughout each sequence). They are kept for the record and are being rerun on a statistically stationary flow. Do not rely on them.
+
 Run record: [`results/qg/qg-full.json`](../results/qg/qg-full.json) (code commit `e18950d`, profile `full`, seeds 0, 1, 2, CPU, 1 h 49 min wall time). Reproduce with:
 
 ```bash
