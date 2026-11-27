@@ -1,0 +1,177 @@
+{
+ "exploratory": true,
+ "code_commit": "67529ffef7cd93404dcc79dff6e07ce980742299",
+ "date": "2026-11-27T09:11:14+00:00",
+ "profile": "full",
+ "train_steps": 3000,
+ "seeds": [
+  0,
+  1
+ ],
+ "quantities": [
+  "kinetic_energy",
+  "available_potential_energy",
+  "enstrophy",
+  "jet_speed_max",
+  "max_cyclonic_vorticity",
+  "max_anticyclonic_vorticity",
+  "n_vortices"
+ ],
+ "wall_seconds": 2098,
+ "rows": [
+  {
+   "features": "mean of squares per channel",
+   "seed": null,
+   "test_r2": {
+    "kinetic_energy": 0.986411325557104,
+    "available_potential_energy": 0.5006367285129376,
+    "enstrophy": 0.9456010936931711,
+    "jet_speed_max": 0.4032147890037534,
+    "max_cyclonic_vorticity": 0.013923085618733677,
+    "max_anticyclonic_vorticity": 0.04433142647628174,
+    "n_vortices": -0.012426482780642623
+   }
+  },
+  {
+   "features": "first 32 PCA components (linear in the field)",
+   "seed": null,
+   "test_r2": {
+    "kinetic_energy": -0.15184546329532256,
+    "available_potential_energy": 0.07979078870303857,
+    "enstrophy": -0.09124189074520839,
+    "jet_speed_max": -0.18496503384201346,
+    "max_cyclonic_vorticity": -0.0567823609832383,
+    "max_anticyclonic_vorticity": -0.07047701995574429,
+    "n_vortices": -0.04105366482673545
+   }
+  },
+  {
+   "features": "conv encoder, random weights",
+   "seed": 0,
+   "conv_norm": "group",
+   "test_r2": {
+    "kinetic_energy": -0.023246017879807512,
+    "available_potential_energy": -0.010325371207016598,
+    "enstrophy": -0.04804752100258258,
+    "jet_speed_max": 0.04076149238225846,
+    "max_cyclonic_vorticity": -0.1493831580886278,
+    "max_anticyclonic_vorticity": -0.08164749231605661,
+    "n_vortices": -0.035992842445447204
+   }
+  },
+  {
+   "features": "conv encoder, one-step JEPA",
+   "seed": 0,
+   "conv_norm": "group",
+   "final_latent_std": 1.0153493881225586,
+   "final_loss": 0.3274543285369873,
+   "collapsed": false,
+   "train_seconds": 454,
+   "test_r2": {
+    "kinetic_energy": -0.028277022981952005,
+    "available_potential_energy": 0.02085728641659279,
+    "enstrophy": -0.014822232747297992,
+    "jet_speed_max": 0.235103264990988,
+    "max_cyclonic_vorticity": -0.06285160969637316,
+    "max_anticyclonic_vorticity": -0.040202468320491125,
+    "n_vortices": -0.02342282384319838
+   }
+  },
+  {
+   "features": "conv encoder, random weights",
+   "seed": 1,
+   "conv_norm": "group",
+   "test_r2": {
+    "kinetic_energy": -0.02634686140963427,
+    "available_potential_energy": 0.00739092478068093,
+    "enstrophy": -0.001752170377260498,
+    "jet_speed_max": 0.11009097686009761,
+    "max_cyclonic_vorticity": -0.06587202978735163,
+    "max_anticyclonic_vorticity": -0.06832945120784162,
+    "n_vortices": -0.021160788219566795
+   }
+  },
+  {
+   "features": "conv encoder, one-step JEPA",
+   "seed": 1,
+   "conv_norm": "group",
+   "final_latent_std": 1.0091352462768555,
+   "final_loss": 0.32908686995506287,
+   "collapsed": false,
+   "train_seconds": 429,
+   "test_r2": {
+    "kinetic_energy": 0.04593935499044488,
+    "available_potential_energy": 0.06440132118582631,
+    "enstrophy": 0.07727562565383395,
+    "jet_speed_max": 0.31917823193236294,
+    "max_cyclonic_vorticity": -0.0711641249725874,
+    "max_anticyclonic_vorticity": -0.027854285074807583,
+    "n_vortices": -0.026007902124446813
+   }
+  },
+  {
+   "features": "conv encoder, random weights",
+   "seed": 0,
+   "conv_norm": "none",
+   "test_r2": {
+    "kinetic_energy": 0.8259761892931283,
+    "available_potential_energy": 0.4317300070103577,
+    "enstrophy": 0.8035728398133704,
+    "jet_speed_max": 0.22979595191155178,
+    "max_cyclonic_vorticity": -0.04707920693671186,
+    "max_anticyclonic_vorticity": -0.010450458076855185,
+    "n_vortices": -0.036222742631161875
+   }
+  },
+  {
+   "features": "conv encoder, one-step JEPA",
+   "seed": 0,
+   "conv_norm": "none",
+   "final_latent_std": 0.8950880765914917,
+   "final_loss": 0.3918812870979309,
+   "collapsed": false,
+   "train_seconds": 412,
+   "test_r2": {
+    "kinetic_energy": 0.20088752848251312,
+    "available_potential_energy": 0.2668934564620197,
+    "enstrophy": 0.2824341942268924,
+    "jet_speed_max": 0.12364171811488933,
+    "max_cyclonic_vorticity": -0.0570868053217497,
+    "max_anticyclonic_vorticity": 0.0032969402627688327,
+    "n_vortices": 0.00899177532228479
+   }
+  },
+  {
+   "features": "conv encoder, random weights",
+   "seed": 1,
+   "conv_norm": "none",
+   "test_r2": {
+    "kinetic_energy": 0.7048018676516725,
+    "available_potential_energy": 0.40928655118921775,
+    "enstrophy": 0.7201319793728098,
+    "jet_speed_max": 0.24301143103943124,
+    "max_cyclonic_vorticity": -0.0631717492584769,
+    "max_anticyclonic_vorticity": -0.03632167883654969,
+    "n_vortices": -0.03025737426146269
+   }
+  },
+  {
+   "features": "conv encoder, one-step JEPA",
+   "seed": 1,
+   "conv_norm": "none",
+   "final_latent_std": 0.9426491260528564,
+   "final_loss": 0.3413047194480896,
+   "collapsed": false,
+   "train_seconds": 421,
+   "test_r2": {
+    "kinetic_energy": 0.45708079946132574,
+    "available_potential_energy": 0.31953533094831654,
+    "enstrophy": 0.49439884547791946,
+    "jet_speed_max": 0.2154602706478238,
+    "max_cyclonic_vorticity": -0.08400061464612851,
+    "max_anticyclonic_vorticity": -5.662008606832636e-05,
+    "n_vortices": -0.008060785059390563
+   }
+  }
+ ]
+}
