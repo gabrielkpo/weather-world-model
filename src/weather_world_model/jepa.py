@@ -49,6 +49,7 @@ class JEPAConfig:
     encoder: Literal["mlp", "conv"] = "mlp"
     input_shape: tuple[int, ...] | None = None
     conv_channels: tuple[int, ...] = (32, 64, 96, 128)
+    conv_norm: Literal["group", "none"] = "group"
     noise_dim: int = 0
 
     def __post_init__(self) -> None:
@@ -149,16 +150,22 @@ class ConvEncoder(nn.Module):
     of ``2 ** len(channels)`` pixels leaves the latent unchanged.
     """
 
-    def __init__(self, in_channels: int, channels: tuple[int, ...], latent_dim: int) -> None:
+    def __init__(
+        self,
+        in_channels: int,
+        channels: tuple[int, ...],
+        latent_dim: int,
+        norm: Literal["group", "none"] = "group",
+    ) -> None:
         super().__init__()
         layers: list[nn.Module] = []
         c_in = in_channels
         for c_out in channels:
-            layers += [
-                nn.Conv2d(c_in, c_out, 3, stride=2, padding=1, padding_mode="circular"),
-                nn.GroupNorm(_group_count(c_out), c_out),
-                nn.GELU(),
-            ]
+            layers.append(nn.Conv2d(c_in, c_out, 3, stride=2, padding=1, padding_mode="circular"))
+            if norm == "group":
+                # GroupNorm rescales each sample, which removes the overall field amplitude
+                layers.append(nn.GroupNorm(_group_count(c_out), c_out))
+            layers.append(nn.GELU())
             c_in = c_out
         self.features = nn.Sequential(*layers)
         self.head = nn.Linear(c_in, latent_dim)
@@ -173,7 +180,7 @@ class ConvEncoder(nn.Module):
 def _build_encoder(config: JEPAConfig) -> nn.Module:
     shape = config.frame_shape
     if config.encoder == "conv":
-        return ConvEncoder(shape[0], config.conv_channels, config.latent_dim)
+        return ConvEncoder(shape[0], config.conv_channels, config.latent_dim, norm=config.conv_norm)
     mlp = _mlp(math.prod(shape), config.hidden_dim, config.latent_dim)
     if len(shape) == 1:
         return mlp
