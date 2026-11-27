@@ -5,18 +5,84 @@ on:
     branches: [main]
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
-      # Same commands as the README "Development" section
+        with:
+          version: "0.12.5"
+      # Same commands as the README "Development" section; CI holds coverage to a higher bar
       - run: uv sync --locked
       - run: uv run ruff check
       - run: uv run ruff format --check
       - run: uv run mypy
-      - run: uv run pytest
+      - run: uv run pytest --cov-fail-under=95
+
+  results:
+    # Run records carry their provenance, and the numbers quoted in the docs match them
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.12.5"
+      - run: uv sync --locked
+      - run: uv run pytest tests/test_results_records.py -p no:cacheprovider --no-cov
+
+  reproducibility:
+    # The smoke profiles give the same JSON twice, apart from provenance and timing keys
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.12.5"
+      - run: uv sync --locked
+      - name: Calibration smoke, twice
+        run: |
+          uv run python -m weather_world_model.calibration.run --profile smoke --out "$RUNNER_TEMP/cal1"
+          uv run python -m weather_world_model.calibration.run --profile smoke --out "$RUNNER_TEMP/cal2"
+          python .github/scripts/compare_runs.py "$RUNNER_TEMP/cal1" "$RUNNER_TEMP/cal2"
+      - name: QG smoke, twice
+        run: |
+          uv run python -m weather_world_model.worlds.run_qg --profile smoke --out "$RUNNER_TEMP/qg1"
+          uv run python -m weather_world_model.worlds.run_qg --profile smoke --out "$RUNNER_TEMP/qg2"
+          python .github/scripts/compare_runs.py "$RUNNER_TEMP/qg1" "$RUNNER_TEMP/qg2"
+
+  build:
+    # The wheel installs and imports in a clean environment; the notebook is committed clean
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.12.5"
+      - run: uv build
+      - name: Install the wheel in a clean venv
+        run: |
+          uv run --no-project --python 3.12 python -m venv "$RUNNER_TEMP/v"
+          # CPU-only torch first (the default Linux wheel bundles CUDA), then the wheel from PyPI
+          "$RUNNER_TEMP/v/bin/pip" install torch --index-url https://download.pytorch.org/whl/cpu
+          "$RUNNER_TEMP/v/bin/pip" install dist/*.whl
+          "$RUNNER_TEMP/v/bin/python" -c "import weather_world_model"
+      - name: Notebook has no outputs
+        run: python .github/scripts/check_notebooks.py
+      - run: uv sync --locked
+      - run: uv run ruff check notebooks/
