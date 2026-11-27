@@ -20,8 +20,6 @@ import torch
 from numpy.typing import NDArray
 from torch import Tensor, nn
 
-from weather_world_model.seeding import seed_everything
-
 FeatureSet = Literal["differences", "asymmetry"]
 
 
@@ -98,7 +96,6 @@ def train_probe(
     max_iter: int = 200,
 ) -> LinearProbe:
     """Full-batch L-BFGS logistic regression with L2 penalty ``l2 * ||w||^2``."""
-    seed_everything(seed)
     if not np.isin(np.asarray(labels), (0, 1)).all():
         raise ValueError("labels must be 0 or 1")
     x_np = np.asarray(features, dtype=np.float64)
