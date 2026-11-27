@@ -18,7 +18,7 @@ Each record's `code_commit` is the last commit of the pull-request branch on whi
 | `results/exploratory/energy-readout-qg.json` | #26, show that GroupNorm erases the field amplitude the energy probes need |
 | `results/qg/qg-stationary-nonorm.json` | #34, step-2 rerun with an encoder without normalisation (amendment 6); produced on branch commit `bfa52fa` |
 | `results/qg/qg-vjepa2.json` | #35, frozen V-JEPA 2 on the QG world (W-V, amendment 2); produced on `main` commit `e760675` on a Kaggle T4 |
-| `results/exploratory/arrow-symmetry-vjepa2.json` | this pull request, arrow-of-time symmetry controls for frozen V-JEPA 2; produced on branch commit `1ec0f61` on a Kaggle T4 |
+| `results/exploratory/arrow-symmetry-vjepa2.json` | #36, arrow-of-time symmetry controls for frozen V-JEPA 2; produced on branch commit `1ec0f61` on a Kaggle T4 |
 | `results/exploratory/arrow-symmetry-vjepa2-waves-damped_waves.json` | this pull request, reversible and damped wave controls of amendment 8; produced on branch commit `c81fb08` on a Kaggle T4 |
 
 Records carry no data hash and no bootstrap intervals; uncertainty is the minimum to maximum over seeds (protocol amendment 7).
@@ -323,7 +323,7 @@ Not a protocol result. Record: [`results/exploratory/arrow-symmetry-vjepa2-waves
 | Random symmetries | **45 to 53 %** | 45 to 58 % | **99 %** | 94 to 97 % |
 | Random symmetries, frozen clips | 51 to 52 % | 47 to 55 % | 52 to 58 % | 50 to 58 % |
 
-- **The pipeline is clean** (criterion: every probe seed at most 55 % on reversible waves under random symmetries): 45 to 53 %. The random-symmetry control removes every cue that does not come from the time direction.
+- **The pipeline is clean** (criterion: every probe seed at most 55 % on reversible waves under random symmetries): 45 to 53 %. No artefact of the rendering or the probes appears on these reversible waves.
 - **The encoder detects dissipation** (criterion: at least 60 % on damped waves): 99 %. So does the random-weight encoder (94 to 97 %): a decaying amplitude is easy to read.
 - **Reading of the QG result.** Both criteria hold, so the 80 to 88 % of the pretrained encoder on the QG flow under random symmetries is compatible with reading irreversibility, as amendment 8 states. It is not a simple amplitude trend: the QG flow is stationary, and the random-weight encoder, which reads damping at 94 to 97 %, is at chance on the QG flow.
 - On plain reversal both pretrained results are 100 %: the propagation direction of the waves is readable, as expected for Rossby waves.
