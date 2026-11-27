@@ -54,3 +54,27 @@ def test_dataset_shapes_and_validation() -> None:
         arrow_of_time_dataset(np.zeros((5, 1, 2)), rng)
     with pytest.raises(ValueError):
         train_probe(f, 2 * y - 1, l2=0.0, seed=0)
+
+
+def test_reversed_class_can_come_from_another_array() -> None:
+    import numpy as np
+    import pytest
+
+    from weather_world_model.diagnostics.arrow import arrow_of_time_dataset, time_asymmetry_features
+
+    rng = np.random.default_rng(0)
+    seqs = rng.standard_normal((40, 6, 3))
+    other = rng.standard_normal((40, 6, 3))
+    x, y = arrow_of_time_dataset(
+        seqs, np.random.default_rng(1), features="asymmetry", reversed_from=other
+    )
+    assert np.allclose(x[y == 1], time_asymmetry_features(seqs)[y == 1])
+    assert np.allclose(x[y == 0], -time_asymmetry_features(other)[y == 0])
+    # Same labels and features as the plain call when the alternate array is the input itself.
+    x_plain, y_plain = arrow_of_time_dataset(seqs, np.random.default_rng(1), features="asymmetry")
+    x_same, y_same = arrow_of_time_dataset(
+        seqs, np.random.default_rng(1), features="asymmetry", reversed_from=seqs
+    )
+    assert np.array_equal(y_plain, y_same) and np.array_equal(x_plain, x_same)
+    with pytest.raises(ValueError, match="reversed_from"):
+        arrow_of_time_dataset(seqs, rng, reversed_from=other[:, :5])

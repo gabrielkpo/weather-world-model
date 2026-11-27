@@ -2,12 +2,12 @@
 
 One test initial state of the QG world is run forward twice by the simulator (world A, and
 world B started from the same state perturbed with epsilon = 1e-3), and the models of one
-seed of the amendment-3 run (one-step ``k1``, 8-step ``k8``, stochastic ``stoch``) are loaded
+seed of the stationary QG run (one-step ``k1``, 8-step ``k8``, stochastic ``stoch``) are loaded
 from their checkpoints and rolled out from the latent of the first frame. The dataset,
 standardisation and probes are those of the run: they are rebuilt with the runner's own
 functions.
 
-Run: ``uv run python scripts/export_demo.py --checkpoints checkpoints/qg-amendment3``.
+Run: ``uv run python scripts/export_demo.py --checkpoints checkpoints/qg-stationary``.
 Default output: ``runs/demo/demo.json`` (``runs/`` is git-ignored). Maps come from the
 simulator; every curve except the ``truth`` ones comes from the models.
 """
@@ -306,7 +306,7 @@ def ranges(record: dict[str, Any]) -> dict[str, list[float]]:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--checkpoints", type=Path, default=Path("checkpoints/qg-amendment3"))
+    parser.add_argument("--checkpoints", type=Path, default=Path("checkpoints/qg-stationary"))
     parser.add_argument("--out", type=Path, default=Path("runs/demo/demo.json"))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--start", type=int, default=0, help="index of the test start state")

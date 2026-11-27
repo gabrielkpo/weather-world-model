@@ -9,8 +9,16 @@ train statistics. Models per seed: the conv JEPA trained with a one-step loss (k
 with an 8-step rollout loss (k = 8) on the same data for the same number of steps, and the
 same encoder with random weights (control for W-P).
 
+Protocol amendment 5: snapshots are taken after a spin-up of 12 000 steps, and the run stops
+before any training unless the training data pass the stationarity check (mean kinetic
+energy of the last third of the snapshots within 10 % of the first third). Amendment 4: the
+arrow-of-time probe is reported against plain reversal and against reversal combined with
+the x-mirror, on true fields and on latents. Records are named ``qg-stationary...`` so that
+the records of the earlier runs (spinning-up flow) stay untouched.
+
 With ``--amendment3`` the run measures protocol amendment 3 and writes
-``qg-amendment3[-<profile>].json``: the k = 1 and k = 8 models are retrained with the same
+``qg-stationary[-<profile>].json`` (without it: ``qg-stationary-base[-<profile>].json``):
+the k = 1 and k = 8 models are retrained with the same
 configuration and seeds, a stochastic one-step model (noise dimension 8, energy score) is
 added, and every model also gets rollout readouts (W-R); the stochastic model's sensitivity
 to initial conditions under a shared noise sequence decides W-S. Trained weights are saved
@@ -64,6 +72,7 @@ EPSILONS = (1e-3, 1e-2)
 THRESHOLDED = ("kinetic_energy", "available_potential_energy", "enstrophy", "jet_speed_max")
 CURVE_POINTS = 40  # curves are stored subsampled to keep the record small
 TORCH_THREADS = 4
+STATIONARITY_TOLERANCE = 0.10
 NOISE_DIM = 8  # noise dimension of the stochastic predictor (protocol amendment 3)
 HORIZONS = (1, 5, 10)  # rollout-readout horizons, in snapshots (W-R)
 READOUT_SAMPLES = 8  # sampled rollouts averaged for the readouts of a stochastic model
@@ -100,6 +109,9 @@ class Profile:
     clip_stride: int
     seeds: tuple[int, ...]
     data_seed: int = 1000
+    # Maximum relative change of the mean kinetic energy between the first and the last third
+    # of the training snapshots (protocol amendment 5); None = reported but not enforced.
+    stationarity_tolerance: float | None = STATIONARITY_TOLERANCE
 
 
 PROFILES: dict[str, Profile] = {
@@ -107,7 +119,7 @@ PROFILES: dict[str, Profile] = {
         n_runs=80,
         snapshots=100,
         sample_every=20,
-        spin_up=4000,
+        spin_up=12000,
         train_steps=3000,
         batch_size=64,
         conv_channels=(32, 64, 96, 128),
@@ -130,6 +142,7 @@ PROFILES: dict[str, Profile] = {
         clip_len=8,
         clip_stride=8,
         seeds=(0,),
+        stationarity_tolerance=None,  # too short to be stationary: the check is only reported
     ),
 }
 
@@ -198,6 +211,47 @@ def simulate(profile: Profile, config: QGConfig | None = None) -> QGData:
         std=std,
         sample_dt=profile.sample_every * cfg.dt,
     )
+
+
+def stationarity_check(
+    kinetic_energy: NDArray[np.floating], tolerance: float | None = STATIONARITY_TOLERANCE
+) -> dict[str, Any]:
+    """Protocol amendment 5: is the recorded flow statistically stationary?
+
+    ``kinetic_energy`` is ``(N, T)``, one row per training run. The mean over runs and
+    snapshots of the last third of each run is compared with that of the first third; the
+    check passes when the relative difference is below ``tolerance``. With ``tolerance``
+    None the difference is reported and ``passes`` is None.
+    """
+    ke = np.asarray(kinetic_energy, dtype=np.float64)
+    if ke.ndim != 2 or ke.shape[1] < 3:
+        raise ValueError(f"expected (N, T>=3) kinetic energies, got {ke.shape}")
+    third = ke.shape[1] // 3
+    first, last = float(ke[:, :third].mean()), float(ke[:, -third:].mean())
+    difference = abs(last - first) / abs(first) if first != 0 else float("inf")
+    return {
+        "quantity": "kinetic_energy",
+        "runs": "train",
+        "first_third_mean": first,
+        "last_third_mean": last,
+        "relative_difference": difference,
+        "tolerance": tolerance,
+        "passes": None if tolerance is None else bool(difference < tolerance),
+    }
+
+
+def mirror_x(frames: NDArray[np.float32], data: QGData) -> NDArray[np.float32]:
+    """Standardised ``(u, v)`` frames mirrored in x, with the sign of the physical v flipped.
+
+    The inviscid QG equations are invariant under ``(t, x, v) -> (-t, -x, -v)``, so a clip
+    that is mirrored and then reversed keeps the direction of wave propagation (protocol
+    amendment 4). ``v`` is flipped in physical units: for a standardised value ``s`` this is
+    ``-s - 2 * mean / std``.
+    """
+    out = frames[..., ::-1].copy()
+    shift = 2.0 * float(data.mean[1].item()) / float(data.std[1].item())
+    out[..., 1, :, :] = -out[..., 1, :, :] - shift
+    return out
 
 
 # --------------------------------------------------------------------- W-A
@@ -298,7 +352,13 @@ def clips(sequences: NDArray[np.floating], clip_len: int, stride: int) -> FloatA
 
 
 def arrow_probe(
-    train: NDArray[np.floating], test: NDArray[np.floating], profile: Profile, seed: int
+    train: NDArray[np.floating],
+    test: NDArray[np.floating],
+    profile: Profile,
+    seed: int,
+    *,
+    train_mirrored: NDArray[np.floating] | None = None,
+    test_mirrored: NDArray[np.floating] | None = None,
 ) -> float:
     """Asymmetry-feature probe: PCA 8 and logistic probe fitted on train clips, test accuracy.
 
@@ -306,13 +366,30 @@ def arrow_probe(
     training frames that the training clips are cut from (each frame once, which keeps the
     memory of the 8192-dimensional oracle fields bounded), then the clips are cut from the
     projected sequences.
+
+    With ``train_mirrored`` and ``test_mirrored`` (the same sequences computed from x-mirrored
+    fields, see :func:`mirror_x`), the "reversed" class is the reversed mirrored clip: the
+    control of protocol amendment 4, which keeps the direction of wave propagation. The PCA
+    is still fitted on the unmirrored training sequences.
     """
+    if (train_mirrored is None) != (test_mirrored is None):
+        raise ValueError("give both mirrored sequences or neither")
     rng = np.random.default_rng(seed)
     mean, basis = _pca(np.asarray(train), min(8, train.shape[-1]))
-    tr = clips((train - mean) @ basis, profile.clip_len, profile.clip_stride)
-    te = clips((test - mean) @ basis, profile.clip_len, profile.clip_stride)
-    x_tr, y_tr = arrow_of_time_dataset(tr, rng, features="asymmetry")
-    x_te, y_te = arrow_of_time_dataset(te, rng, features="asymmetry")
+
+    def cut(seqs: NDArray[np.floating] | None) -> FloatArray | None:
+        if seqs is None:
+            return None
+        return clips((seqs - mean) @ basis, profile.clip_len, profile.clip_stride)
+
+    tr, te = cut(train), cut(test)
+    assert tr is not None and te is not None  # noqa: S101 (narrowing for the type checker)
+    x_tr, y_tr = arrow_of_time_dataset(
+        tr, rng, features="asymmetry", reversed_from=cut(train_mirrored)
+    )
+    x_te, y_te = arrow_of_time_dataset(
+        te, rng, features="asymmetry", reversed_from=cut(test_mirrored)
+    )
     probe = train_probe(x_tr, y_tr, l2=1e-3, seed=seed)
     return probe_accuracy(probe, x_te, y_te)
 
@@ -349,6 +426,16 @@ def evaluate_model(
     if dynamics:
         result["predictability"] = latent_predictability(model, data, profile, seed)
         result["arrow_accuracy"] = arrow_probe(lat["train"], lat["test"], profile, seed)
+        result["arrow_accuracy_mirrored"] = arrow_probe(
+            lat["train"],
+            lat["test"],
+            profile,
+            seed,
+            train_mirrored=encode_numpy(
+                model, mirror_x(data.frames["train"], data), batch_size=256
+            ),
+            test_mirrored=encode_numpy(model, mirror_x(data.frames["test"], data), batch_size=256),
+        )
     if rollouts:
         generator = torch.Generator().manual_seed(seed)
 
@@ -483,6 +570,7 @@ def verdicts(truth: dict[str, Any], seeds: list[dict[str, Any]]) -> dict[str, An
         for e1, e8 in zip(err1, err8, strict=True)
     )
     arrow = {m: [s[m]["arrow_accuracy"] for s in seeds] for m in ("k1", "k8")}
+    mirrored = {m: [s[m]["arrow_accuracy_mirrored"] for s in seeds] for m in ("k1", "k8")}
     wp: dict[str, Any] = {}
     for m in ("k1", "k8"):
         per_q: dict[str, Any] = {}
@@ -513,7 +601,11 @@ def verdicts(truth: dict[str, Any], seeds: list[dict[str, Any]]) -> dict[str, An
             "supported": wa_ok,
         },
         "W-C": {
-            m: {"accuracy": _summary(arrow[m]), "supported": min(arrow[m]) > 0.80}
+            m: {
+                "accuracy": _summary(arrow[m]),
+                "accuracy_mirrored_control": _summary(mirrored[m]),
+                "supported": min(arrow[m]) > 0.80,
+            }
             for m in ("k1", "k8")
         },
         "W-P": wp,
@@ -586,6 +678,9 @@ def verdicts_amendment3(truth: dict[str, Any], seeds: list[dict[str, Any]]) -> d
         },
         "stochastic_reported": {
             "W-C_accuracy": _summary(arrow),
+            "W-C_accuracy_mirrored_control": _summary(
+                [s["stoch"]["arrow_accuracy_mirrored"] for s in seeds]
+            ),
             "W-P_r2": {
                 name: _summary([s["stoch"]["readouts"][name]["test_r2"] for s in seeds])
                 for name in DIAGNOSTIC_NAMES
@@ -624,17 +719,47 @@ def run(
     data = simulate(profile)
     simulate_s = time.perf_counter() - t0
     log(f"simulated {profile.n_runs} runs in {simulate_s:.0f}s, peak RSS {peak_rss_mb():.0f} MB")
+    stationarity = stationarity_check(
+        data.diags["train"][..., DIAGNOSTIC_NAMES.index("kinetic_energy")],
+        profile.stationarity_tolerance,
+    )
+    log(
+        f"stationarity: kinetic energy {stationarity['first_third_mean']:.4f} (first third) -> "
+        f"{stationarity['last_third_mean']:.4f} (last third), relative difference "
+        f"{stationarity['relative_difference']:.3f}, tolerance {stationarity['tolerance']}"
+    )
+    if stationarity["passes"] is False:
+        raise RuntimeError(
+            "the training data are not stationary (protocol amendment 5): mean kinetic energy "
+            f"goes from {stationarity['first_third_mean']:.4f} in the first third of the "
+            f"snapshots to {stationarity['last_third_mean']:.4f} in the last third, a relative "
+            f"difference of {stationarity['relative_difference']:.3f} (tolerance "
+            f"{stationarity['tolerance']}); increase the spin-up. Nothing was trained."
+        )
     if "truth" in done:
         truth = done["truth"]["predictability"]
         oracle_arrow = done["truth"]["arrow_accuracy"]
+        oracle_mirrored = done["truth"]["arrow_accuracy_mirrored"]
     else:
         truth = true_predictability(data, profile, profile.data_seed)
+
+        def fields(split: str, mirrored: bool) -> NDArray[np.float32]:
+            frames = data.frames[split]
+            frames = mirror_x(frames, data) if mirrored else frames
+            return frames.reshape(*frames.shape[:2], -1)
+
         oracle_arrow = arrow_probe(
-            data.frames["train"].reshape(*data.frames["train"].shape[:2], -1),
-            data.frames["test"].reshape(*data.frames["test"].shape[:2], -1),
+            fields("train", False), fields("test", False), profile, profile.data_seed
+        )
+        oracle_mirrored = arrow_probe(
+            fields("train", False),
+            fields("test", False),
             profile,
             profile.data_seed,
+            train_mirrored=fields("train", True),
+            test_mirrored=fields("test", True),
         )
+        gc.collect()
         log(f"truth done, peak RSS {peak_rss_mb():.0f} MB")
     seeds: list[dict[str, Any]] = list(done.get("seeds", []))
     previous_wall = float(done.get("wall_seconds", 0.0))
@@ -657,7 +782,12 @@ def run(
             "simulate_seconds": simulate_s,
             "wall_seconds": previous_wall + time.perf_counter() - t0,
             "resumed": bool(done),
-            "truth": {"predictability": truth, "arrow_accuracy": oracle_arrow},
+            "stationarity": stationarity,
+            "truth": {
+                "predictability": truth,
+                "arrow_accuracy": oracle_arrow,
+                "arrow_accuracy_mirrored": oracle_mirrored,
+            },
             "seeds": seeds,
         }
         if amendment3:
@@ -672,10 +802,13 @@ def run(
             }
         if final and amendment3:
             rec["verdicts"] = verdicts_amendment3(truth, seeds)
-            rec["verdicts"]["retrained_k1_k8"]["W-C"]["oracle_accuracy"] = oracle_arrow
+            wc = rec["verdicts"]["retrained_k1_k8"]["W-C"]
         elif final:
             rec["verdicts"] = verdicts(truth, seeds)
-            rec["verdicts"]["W-C"]["oracle_accuracy"] = oracle_arrow
+            wc = rec["verdicts"]["W-C"]
+        if final:
+            wc["oracle_accuracy"] = oracle_arrow
+            wc["oracle_accuracy_mirrored_control"] = oracle_mirrored
         return rec
 
     for s in profile.seeds:
@@ -704,9 +837,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
-    stem = f"qg-{args.profile}"
-    if args.amendment3:
-        stem = "qg-amendment3" if args.profile == "full" else f"qg-amendment3-{args.profile}"
+    stem = "qg-stationary" if args.amendment3 else "qg-stationary-base"
+    if args.profile != "full":
+        stem = f"{stem}-{args.profile}"
     partial = args.out / f"{stem}.partial.json"
     checkpoints = args.checkpoints / stem if args.checkpoints is not None else None
     record = run(args.profile, partial=partial, amendment3=args.amendment3, checkpoints=checkpoints)
