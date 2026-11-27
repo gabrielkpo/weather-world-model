@@ -102,7 +102,7 @@ The diagnostic code recovers the known answers; the small world model keeps the 
 |---|---|---|
 | 0 | Repository foundation, protocol | done |
 | 1 | Lorenz-96 proof of concept, calibrated diagnostics | done, see [results](docs/RESULTS.md) |
-| 2 | Quasi-geostrophic wind world: simulator, small JEPA (one-step and multi-step), V-JEPA 2, predictability, arrow of time, readouts | in progress: first results superseded (data recorded before the flow was stationary), rerun under way |
+| 2 | Quasi-geostrophic wind world: simulator, small JEPA (one-step and multi-step), V-JEPA 2, predictability, arrow of time, readouts | in progress: small JEPA rerun on a stationary flow, no hypothesis supported; V-JEPA 2 pending |
 | 3 | SEVIR radar with NOAA Storm Events, adapted V-JEPA 2 | planned |
 | 4 | Results, report | planned |
 
