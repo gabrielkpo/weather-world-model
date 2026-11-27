@@ -13,6 +13,7 @@ from weather_world_model.worlds.vjepa2_qg import (
     VideoSpec,
     clip_latents,
     clip_videos,
+    d4_fields,
     encode_clips,
     evaluate_encoder,
     fit_render_scales,
@@ -23,6 +24,8 @@ from weather_world_model.worlds.vjepa2_qg import (
     record_norm,
     render,
     small_jepa_reference,
+    symmetry_controls,
+    transformed_clip_latents,
     wv_comparison,
 )
 
@@ -182,3 +185,55 @@ def test_wv_verdict_only_against_no_norm_records() -> None:
     assert closed["supported"] is False  # accuracy margin 0.02 < 0.05
     refs["nn"] = small_jepa_reference(_record(0.8, 0.7))
     assert wv_comparison(vjepa, refs, {"gn": "group", "nn": "none"})["supported"] is True
+
+
+def _velocity(psi: np.ndarray) -> np.ndarray:
+    """u = -dpsi/dy, v = dpsi/dx on a periodic grid (rows y, columns x), central differences."""
+    d_dy = (np.roll(psi, -1, 0) - np.roll(psi, 1, 0)) / 2
+    d_dx = (np.roll(psi, -1, 1) - np.roll(psi, 1, 1)) / 2
+    return np.stack([-d_dy, d_dx])
+
+
+@pytest.mark.parametrize("k", range(8))
+def test_d4_transforms_the_flow_not_only_the_image(k: int) -> None:
+    psi = np.random.default_rng(k).normal(size=(12, 12))
+    expected = psi[:, ::-1] * -1 if k >= 4 else psi  # psi is a pseudo-scalar under reflection
+    for _ in range(k % 4):
+        expected = np.rot90(expected, 1, axes=(1, 0))
+    out = d4_fields(torch.as_tensor(_velocity(psi)), k).numpy()
+    assert np.allclose(out, _velocity(np.ascontiguousarray(expected)))
+    assert np.isclose((out**2).sum(), (_velocity(psi) ** 2).sum())  # kinetic energy kept
+
+
+def test_d4_rejects_an_unknown_element() -> None:
+    with pytest.raises(ValueError, match=r"0\.\.7"):
+        d4_fields(torch.zeros(2, 4, 4), 8)
+
+
+def test_transformed_clip_latents_match_the_plain_path() -> None:
+    runs = _runs(2, 8)
+    scales = fit_render_scales(runs)
+    enc = TinyVJEPA()
+    kw: dict[str, Any] = {"batch_size": 3}
+    for rev, mir in ((False, False), (True, False), (True, True)):
+        plain = clip_latents(enc, runs, scales, SPEC, reverse=rev, mirror=mir, **kw)
+        out = transformed_clip_latents(enc, runs, scales, SPEC, reverse=rev, mirror=mir, **kw)
+        assert np.allclose(out, plain)
+    n = plain.shape[0]
+    same = transformed_clip_latents(enc, runs, scales, SPEC, transforms=np.zeros(n, int), **kw)
+    assert np.allclose(same, clip_latents(enc, runs, scales, SPEC, reverse=False, mirror=False,
+                                          **kw))  # fmt: skip
+    static = transformed_clip_latents(enc, runs, scales, SPEC, static=True, **kw)
+    assert np.allclose(static, static[:, :1])  # one snapshot repeated: same latent everywhere
+    with pytest.raises(ValueError, match="transforms"):
+        transformed_clip_latents(enc, runs, scales, SPEC, transforms=np.zeros(n + 1, int), **kw)
+
+
+def test_symmetry_controls_report_every_comparison() -> None:
+    fields = {"train": _runs(4, 8, 1), "test": _runs(2, 8, 2)}
+    out = symmetry_controls(TinyVJEPA(), fields, SPEC, batch_size=4, probe_seeds=(0, 1))
+    for key in ("plain", "mirrored", "mirror_only", "d4", "d4_static"):
+        assert len(out[key]["clip"]) == 2
+        assert all(0.0 <= a <= 1.0 for a in out[key]["clip"])
+    assert "asymmetry" in out["d4"] and "asymmetry" not in out["d4_static"]
+    assert out["n_clips"] == {"train": 12, "test": 6}

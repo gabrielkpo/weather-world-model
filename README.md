@@ -107,7 +107,7 @@ Exploratory, not protocol results:
 |---|---|---|
 | 1 | Lorenz-96 proof of concept | done |
 | 2 | QG wind world, small JEPAs | done on a stationary flow, with GroupNorm and without normalisation (amendment 6); no hypothesis supported |
-| 2b | Frozen V-JEPA 2 on the QG world (W-V) | done: W-V supported against the small JEPAs; random-weight control reads energies better; mirrored arrow-of-time result not yet controlled |
+| 2b | Frozen V-JEPA 2 on the QG world (W-V) | done: W-V supported against the small JEPAs; random-weight control reads energies better; its mirrored arrow-of-time result is an artefact of mirrored images; with random rotations and reflections it reads the time direction at 80 to 88 % (random weights at chance) |
 | 3 | SEVIR radar, NOAA Storm Events, adapted V-JEPA 2 | planned |
 
 ## Run it

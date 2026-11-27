@@ -127,6 +127,29 @@ def mirror_fields(fields: Tensor) -> Tensor:
     return torch.stack([out[..., 0, :, :], -out[..., 1, :, :]], dim=-3)
 
 
+def d4_fields(fields: Tensor, k: int) -> Tensor:
+    """Wind fields ``(..., 2, H, W)`` under element ``k`` (0 to 7) of the square's symmetry group.
+
+    The grid and the vector are transformed together, so the result is the wind of the
+    transformed flow: ``k >= 4`` reflects ``x -> -x`` (``u`` changes sign), then ``k % 4``
+    quarter turns rotate the grid and the vector ``(u, v) -> (-v, u)``. ``k = 0`` is the
+    identity. Columns are ``x`` and rows are ``y``.
+    """
+    if not 0 <= k < 8:
+        raise ValueError(f"k must be in 0..7, got {k}")
+    u, v = fields[..., 0, :, :], fields[..., 1, :, :]
+    if k >= 4:
+        u, v = -torch.flip(u, dims=(-1,)), torch.flip(v, dims=(-1,))
+    for _ in range(k % 4):
+        u, v = -_quarter_turn(v), _quarter_turn(u)
+    return torch.stack([u, v], dim=-3)
+
+
+def _quarter_turn(a: Tensor) -> Tensor:
+    """Grid rotated by +90 degrees in (x = column, y = row): ``out[y, x] = a[n - 1 - x, y]``."""
+    return torch.rot90(a, 1, dims=(-1, -2))
+
+
 def render(fields: Tensor, scales: RenderScales, spec: VideoSpec) -> Tensor:
     """Physical fields ``(M, 2, H, W)`` -> normalised RGB images ``(M, 3, S, S)``."""
     u, v = fields[:, 0], fields[:, 1]
@@ -368,6 +391,129 @@ def evaluate_encoder(
         result[f"arrow_asymmetry_{key}"] = [asymmetry_arrow_probe(*args, s) for s in probe_seeds]
     result["arrow_probe_seeds"] = list(probe_seeds)
     result["n_clips"] = {s: int(cl[s]["forward"].shape[0]) for s in cl}
+    return result
+
+
+# ------------------------------------------------- symmetry controls (exploratory)
+def transformed_clip_latents(
+    encoder: Encoder,
+    runs: NDArray[np.floating],
+    scales: RenderScales,
+    spec: VideoSpec,
+    *,
+    reverse: bool = False,
+    mirror: bool = False,
+    transforms: NDArray[np.integer] | None = None,
+    static: bool = False,
+    batch_size: int,
+    device: torch.device | str = "cpu",
+) -> FloatArray:
+    """W-C per-position latents ``(C, L, D)`` with optional per-clip transformations.
+
+    Clips are cut and ordered as in :func:`clip_latents`. Each clip is mirrored as in the
+    mirrored control (``mirror``), read backwards (``reverse``), transformed by the element
+    ``transforms[c]`` of :func:`d4_fields`, and with ``static`` replaced by its first snapshot
+    (after reversal) repeated over the clip, in that order.
+    """
+    n, t_len = runs.shape[:2]
+    jobs = [(i, s) for s in range(0, t_len - spec.clip_len + 1, spec.clip_stride) for i in range(n)]
+    if transforms is not None and len(transforms) != len(jobs):
+        raise ValueError(f"expected {len(jobs)} transforms, got {len(transforms)}")
+    parts = []
+    for b0 in range(0, len(jobs), batch_size):
+        batch = jobs[b0 : b0 + batch_size]
+        x = torch.as_tensor(
+            np.stack([runs[i, s : s + spec.clip_len] for i, s in batch]),
+            dtype=torch.float32,
+            device=device,
+        )
+        if mirror:
+            x = mirror_fields(x)
+        if reverse:
+            x = torch.flip(x, dims=(1,))
+        if transforms is not None:
+            ks = transforms[b0 : b0 + len(batch)]
+            x = torch.stack([d4_fields(c, int(k)) for c, k in zip(x, ks, strict=True)])
+        if static:
+            x = x[:, :1].expand_as(x).contiguous()
+        lat = encode_clips(encoder, x, scales, spec)
+        parts.append(lat.cpu().numpy().astype(np.float64))
+    return np.concatenate(parts, axis=0)
+
+
+SYMMETRY_SETS: dict[str, dict[str, bool]] = {
+    "forward": {},
+    "reversed": {"reverse": True},
+    "mirrored_reversed": {"reverse": True, "mirror": True},
+    "mirrored_forward": {"mirror": True},
+    "d4_forward": {"d4": True},
+    "d4_reversed": {"reverse": True, "d4": True},
+    "d4_static_first": {"d4": True, "static": True},
+    "d4_static_last": {"reverse": True, "d4": True, "static": True},
+}
+# name: (class 1, class 0, asymmetry probe too)
+SYMMETRY_COMPARISONS: dict[str, tuple[str, str, bool]] = {
+    "plain": ("forward", "reversed", True),
+    "mirrored": ("forward", "mirrored_reversed", True),
+    "mirror_only": ("forward", "mirrored_forward", False),
+    "d4": ("d4_forward", "d4_reversed", True),
+    "d4_static": ("d4_static_first", "d4_static_last", False),
+}
+
+
+def symmetry_controls(
+    encoder: Encoder,
+    fields: dict[str, NDArray[np.floating]],
+    spec: VideoSpec,
+    *,
+    batch_size: int,
+    device: torch.device | str = "cpu",
+    probe_seeds: Sequence[int] = PROBE_SEEDS,
+    transform_seed: int = 0,
+    log: Callable[[str], None] = lambda _m: None,
+) -> dict[str, Any]:
+    """Arrow-of-time probes under controls that remove spatial cues (exploratory).
+
+    ``plain`` and ``mirrored`` repeat the W-C probes. ``mirror_only`` asks whether the
+    encoder tells a mirrored clip from a plain one with time unchanged. ``d4`` gives every
+    clip of both classes an independent random element of :func:`d4_fields`, so orientation
+    and handedness carry no information on the label and only the time direction does;
+    ``d4_static`` does the same with each clip frozen on one snapshot (first against last),
+    so no motion is left. The forward and reversed classes of a ``d4`` comparison use
+    independent draws, drawn once per split with ``transform_seed``.
+    """
+    scales = fit_render_scales(fields["train"])
+    kw: dict[str, Any] = {"batch_size": batch_size, "device": device}
+    lat: dict[str, dict[str, FloatArray]] = {}
+    for split in ("train", "test"):
+        runs = fields[split]
+        n_clips = runs.shape[0] * len(range(0, runs.shape[1] - spec.clip_len + 1, spec.clip_stride))
+        rng = np.random.default_rng([transform_seed, 0 if split == "train" else 1])
+        draws = {"forward": rng.integers(0, 8, n_clips), "reversed": rng.integers(0, 8, n_clips)}
+        lat[split] = {}
+        for name, opts in SYMMETRY_SETS.items():
+            transforms = None
+            if opts.get("d4"):
+                transforms = draws["reversed" if opts.get("reverse") else "forward"]
+            lat[split][name] = transformed_clip_latents(
+                encoder,
+                runs,
+                scales,
+                spec,
+                reverse=opts.get("reverse", False),
+                mirror=opts.get("mirror", False),
+                transforms=transforms,
+                static=opts.get("static", False),
+                **kw,
+            )
+            log(f"symmetry {split} {name}: {lat[split][name].shape}")
+    result: dict[str, Any] = {"transform_seed": transform_seed, "probe_seeds": list(probe_seeds)}
+    for key, (pos, neg, asym) in SYMMETRY_COMPARISONS.items():
+        args = (lat["train"][pos], lat["train"][neg], lat["test"][pos], lat["test"][neg])
+        result[key] = {"clip": [clip_arrow_probe(*args, s) for s in probe_seeds]}
+        if asym:
+            result[key]["asymmetry"] = [asymmetry_arrow_probe(*args, s) for s in probe_seeds]
+    result["n_clips"] = {s: int(lat[s]["forward"].shape[0]) for s in lat}
     return result
 
 
