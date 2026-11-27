@@ -18,7 +18,7 @@ Each record's `code_commit` is the last commit of the pull-request branch on whi
 | `results/exploratory/energy-readout-qg.json` | #26, show that GroupNorm erases the field amplitude the energy probes need |
 | `results/exploratory/contraction-lorenz.json` | this pull request, training variants against latent contraction on Lorenz-96; produced on `main` commit `768589e` with the script not yet committed (`code_dirty`), committed unchanged here apart from lint fixes |
 | `results/qg/qg-stationary-nonorm.json` | #34, step-2 rerun with an encoder without normalisation (amendment 6); produced on branch commit `bfa52fa` |
-| `results/qg/qg-vjepa2.json` | this pull request, frozen V-JEPA 2 on the QG world (W-V, amendment 2); produced on `main` commit `e760675` on a Kaggle T4 |
+| `results/qg/qg-vjepa2.json` | #35, frozen V-JEPA 2 on the QG world (W-V, amendment 2); produced on `main` commit `e760675` on a Kaggle T4 |
 
 Records carry no data hash and no bootstrap intervals; uncertainty is the minimum to maximum over seeds (protocol amendment 7).
 
