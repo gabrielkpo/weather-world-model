@@ -197,3 +197,62 @@ def test_mirror_x_is_an_involution_that_flips_physical_v() -> None:
     np.testing.assert_allclose(
         physical_mirrored[..., 1, :, :], -physical[..., 1, :, ::-1], atol=1e-5
     )
+
+
+def test_conv_norm_option_reaches_every_encoder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import torch
+
+    from weather_world_model import jepa
+    from weather_world_model.jepa import JEPAConfig, SequenceJEPA
+    from weather_world_model.worlds import run_qg
+
+    built: list[str] = []
+    original = jepa._build_encoder
+
+    def spy(config: JEPAConfig) -> torch.nn.Module:
+        built.append(config.conv_norm)
+        return original(config)
+
+    monkeypatch.setattr(jepa, "_build_encoder", spy)
+    args = ["--profile", "smoke", "--conv-norm", "none", "--out", str(tmp_path / "out")]
+    run_qg.main([*args, "--checkpoints", str(tmp_path / "ckpt")])
+    # k1, k8 and the random-weight control: every encoder is built without normalisation.
+    assert built == ["none", "none", "none"]
+    record = json.loads((tmp_path / "out" / "qg-stationary-base-nonorm-smoke.json").read_text())
+    assert record["conv_norm"] == "none"
+    path = tmp_path / "ckpt" / "qg-stationary-base-nonorm-smoke" / "seed0-k1.pt"
+    saved = torch.load(path, weights_only=True)
+    assert saved["config"]["conv_norm"] == "none"
+    model = SequenceJEPA(JEPAConfig(**{**saved["config"], "input_shape": (2, 64, 64)}))
+    assert not any(isinstance(m, torch.nn.GroupNorm) for m in model.modules())
+    model.load_state_dict(saved["state_dict"])
+
+    # The default keeps GroupNorm and the earlier record name.
+    built.clear()
+    run_qg.main(["--profile", "smoke", "--out", str(tmp_path / "out")])
+    assert built == ["group", "group", "group"]
+    default = json.loads((tmp_path / "out" / "qg-stationary-base-smoke.json").read_text())
+    assert default["conv_norm"] == "group"
+    assert default["seeds"][0]["random"]["readouts"] != record["seeds"][0]["random"]["readouts"]
+
+
+def test_checkpoint_saved_before_a_config_field_existed_still_matches() -> None:
+    from dataclasses import asdict
+
+    from weather_world_model.jepa import JEPAConfig
+    from weather_world_model.worlds.run_qg import PROFILES, _plain, checkpoint_matches
+
+    profile = PROFILES["smoke"]
+    cfg = JEPAConfig(encoder="conv", input_shape=(2, 8, 8), conv_channels=(4, 8))
+    saved = {"config": _plain(asdict(cfg)), "profile": _plain(asdict(profile)), "seed": 0}
+    assert checkpoint_matches(saved, cfg, profile, 0)
+    old = {**saved, "config": {k: v for k, v in saved["config"].items() if k != "conv_norm"}}
+    assert checkpoint_matches(old, cfg, profile, 0)  # read with the default, "group"
+    no_norm = JEPAConfig(
+        encoder="conv", input_shape=(2, 8, 8), conv_channels=(4, 8), conv_norm="none"
+    )
+    assert not checkpoint_matches(old, no_norm, profile, 0)
+    assert not checkpoint_matches(saved, cfg, profile, 1)
+    assert not checkpoint_matches({}, cfg, profile, 0)
