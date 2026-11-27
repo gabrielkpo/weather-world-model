@@ -16,9 +16,10 @@ Each record's `code_commit` is the last commit of the pull-request branch on whi
 | `results/qg/qg-energy-long.json` | #24, record QG data on a stationary flow (amendment 5) |
 | `results/qg/qg-stationary.json` | #25, report step 2 on a stationary QG flow (amendment 5) |
 | `results/exploratory/energy-readout-qg.json` | #26, show that GroupNorm erases the field amplitude the energy probes need |
+| `results/exploratory/contraction-lorenz.json` | this pull request, training variants against latent contraction on Lorenz-96; produced on `main` commit `768589e` with the script not yet committed (`code_dirty`), committed unchanged here apart from lint fixes |
 | `results/qg/qg-stationary-nonorm.json` | #34, step-2 rerun with an encoder without normalisation (amendment 6); produced on branch commit `bfa52fa` |
 | `results/qg/qg-vjepa2.json` | #35, frozen V-JEPA 2 on the QG world (W-V, amendment 2); produced on `main` commit `e760675` on a Kaggle T4 |
-| `results/exploratory/arrow-symmetry-vjepa2.json` | this pull request, arrow-of-time symmetry controls for frozen V-JEPA 2; produced on branch commit `1ec0f61` on a Kaggle T4 |
+| `results/exploratory/arrow-symmetry-vjepa2.json` | #36, arrow-of-time symmetry controls for frozen V-JEPA 2; produced on branch commit `1ec0f61` on a Kaggle T4 |
 
 Records carry no data hash and no bootstrap intervals; uncertainty is the minimum to maximum over seeds (protocol amendment 7).
 
@@ -84,6 +85,26 @@ Ensemble spread, as a fraction of the saturation distance (range over seeds): 0.
 - **Noise does not make the predictor sensitive to its initial state.** With the noise sequence held fixed, two rollouts started 0.1 % apart come closer over time, slightly faster than with the deterministic model: the stochastic predictor is still a contraction in its latent argument. A proper score for the next-step distribution does not, by itself, teach the map to amplify small differences.
 - **The model does produce diverse futures, but through the noise, not through chaos.** Members of an ensemble started from the same state are a fifth of the saturation distance apart after a single step and reach the saturation distance after 2.5 to 6 time units. The true system needs about 4 time units to bring a 0.1 % perturbation to half of saturation, starting slowly and accelerating; the model's spread jumps at the first step and then grows ever more slowly. The uncertainty is injected at each step rather than grown from the initial error.
 - **Consequence.** Neither the deterministic nor the stochastic one-step model reproduces chaotic error growth on Lorenz-96. The stochastic variant is still measured on the QG world (W-S), as planned.
+
+### Exploratory: training variants against latent contraction
+
+Not a protocol result. Record: [`results/exploratory/contraction-lorenz.json`](../results/exploratory/contraction-lorenz.json) (calibration data and profile `full`, seeds 0, 1, 2, CPU, 8 min). Growth rate of diagnostic A at ε = 10⁻³ (stochastic models: twin rollouts sharing one noise sequence); the leading Lyapunov exponent is 1.68 to 1.70. Reproduce with `uv run python scripts/explore_contraction_lorenz.py --out results/exploratory`.
+
+| Variant | Growth rate (seeds 0, 1, 2) |
+|---|---|
+| One-step, deterministic (calibration model) | 0.00, 0.04, 0.24 |
+| One-step, stochastic (amendment 3 model) | −0.23, −0.15, −0.04 |
+| Variance and covariance terms ×10, also on predicted latents, deterministic | 0.53, 0.47, 0.48 |
+| Same, stochastic | 0.19, 0.02, 0.04 |
+| Stochastic, energy score over 8-step rollouts | −0.34, −0.38, −0.33 |
+| Stochastic, noise added to the latent state before the dynamics, one-step | −0.21, −0.26, −0.17 |
+| Same, 8-step rollouts | −0.21, −0.30, −0.25 |
+| Deterministic, forcing 6 to 10 across trajectories (measured at forcing 8) | 0.08, −0.05, −0.03 |
+
+- **Only the stronger regularisation moves the growth rate,** to about 0.5 on all three seeds, still about 30 % of the true exponent. No variant collapsed.
+- **The stochastic models spread without being sensitive.** Their ensemble spread grows at 6.4 to 6.9, about four times the true exponent, while their sensitivity to the initial state is negative: the spread comes from the injected noise, not from the dynamics. Putting the noise in the latent state does not change this.
+- **The 8-step energy score makes contraction worse,** and varying the forcing lets a ridge probe read it from the latents (R² 0.43 to 0.55) without changing the growth rate.
+- One training length and hand-set weights; the strength of the regularisation is not swept here.
 
 ## Step 2: quasi-geostrophic world
 
