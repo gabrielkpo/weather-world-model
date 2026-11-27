@@ -137,10 +137,34 @@ def _record(acc: float, r2: float, **extra: Any) -> dict[str, Any]:
     return {"code_commit": "abc", "seeds": [{"k1": model, "k8": model}], **extra}
 
 
-def test_record_norm_reads_config_then_file_name() -> None:
+def test_record_norm_reads_a_runner_record_under_a_neutral_name(tmp_path: Path) -> None:
+    import json
+
+    from weather_world_model.worlds import run_qg
+
+    run_qg.main(["--profile", "smoke", "--conv-norm", "none", "--out", str(tmp_path)])
+    record = json.loads((tmp_path / "qg-stationary-base-nonorm-smoke.json").read_text())
+    # The name carries no hint: the value must come from the record itself.
+    assert record_norm(record, Path("reference.json")) == "none"
+    assert record_norm({**record, "conv_norm": "group"}, Path("x-nonorm.json")) == "group"
+
+
+def test_record_norm_falls_back_to_config_then_file_name() -> None:
     assert record_norm(_record(0.5, 0.5, config={"conv_norm": "none"}), Path("x.json")) == "none"
-    assert record_norm(_record(0.5, 0.5), Path("qg-stationary-nonorm.json")) == "none"
+    assert record_norm(_record(0.5, 0.5, config=None), Path("qg-stationary-nonorm.json")) == "none"
     assert record_norm(_record(0.5, 0.5), Path("qg-stationary.json")) == "group"
+
+
+def test_wv_skips_a_record_without_small_jepa_models() -> None:
+    vjepa = {
+        "arrow_clip_plain": [0.9],
+        "arrow_asymmetry_plain": [0.6],
+        "readouts": {q: {"test_r2": 0.8} for q in DIAGNOSTIC_NAMES},
+    }
+    empty = small_jepa_reference({"code_commit": "abc", "seeds": [{"random": {}}]})
+    out = wv_comparison(vjepa, {"empty": empty}, {"empty": "none"})
+    assert out["against"]["empty"]["supported"] is None
+    assert out["supported"] is None and "note" in out
 
 
 def test_wv_verdict_only_against_no_norm_records() -> None:
