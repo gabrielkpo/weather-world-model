@@ -70,11 +70,6 @@ def fit_dmd(
     )
 
 
-def growth_modes(result: DMDResult, *, tol: float = 0.0) -> NDArray[np.intp]:
-    """Indices of eigenvalues with modulus > 1 + tol."""
-    return np.flatnonzero(np.abs(result.eigenvalues) > 1.0 + tol)
-
-
 def project_on_mode(
     result: DMDResult, z: NDArray[np.floating], index: int
 ) -> NDArray[np.complex128]:

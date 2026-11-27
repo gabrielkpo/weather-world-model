@@ -87,5 +87,4 @@ def test_spectrum_sorted_and_dissipative_tail() -> None:
 @pytest.mark.slow
 def test_leading_exponent_long_run() -> None:
     lam = leading_lyapunov_lorenz96(n_steps=100_000, burn_in=5000, rng=np.random.default_rng(5))
-    print(f"leading Lyapunov exponent, 1000 time units: {lam:.4f}")
     assert 1.5 < lam < 1.9

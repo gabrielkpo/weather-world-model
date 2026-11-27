@@ -16,14 +16,18 @@ from weather_world_model.calibration.lorenz96 import (
     leading_lyapunov_lorenz96,
     simulate_lorenz96_batch,
 )
-from weather_world_model.calibration.run import (
-    PROFILES,
-    _encoder,
-    _growth,
-    _latent_rollout,
+from weather_world_model.calibration.run import PROFILES, SAMPLE_DT
+from weather_world_model.diagnostics.predictability import (
+    growth_fit,
+    saturation_distance,
+    separation_curve,
 )
-from weather_world_model.diagnostics.predictability import saturation_distance, separation_curve
-from weather_world_model.jepa import JEPAConfig, train_jepa
+from weather_world_model.jepa import (
+    JEPAConfig,
+    latent_rollout,
+    standardised_encoder,
+    train_jepa,
+)
 from weather_world_model.seeding import seed_everything
 
 
@@ -46,19 +50,20 @@ def main() -> None:
             (train - mean) / std, cfg, n_steps=profile.train_steps, seed=args.seed
         )
         elapsed = time.perf_counter() - t0
-        encode = _encoder(model, mean, std)
+        encode = standardised_encoder(model, mean, std)
         eval_rng = seed_everything(args.seed + 1000)
         for eps in (1e-3, 1e-2):
             curve = separation_curve(
                 encode,
-                _latent_rollout(model),
+                latent_rollout(model),
                 frames,
                 epsilon=eps,
                 k=profile.rollout_k,
                 rng=eval_rng,
             )
             try:
-                g = _growth(curve, saturation_distance(encode(frames), eval_rng))
+                saturation = saturation_distance(encode(frames), eval_rng)
+                g = growth_fit(curve, saturation, dt=SAMPLE_DT)
                 rate = f"{g['growth_rate']:.3f} (window {g['window']})"
             except ValueError as err:
                 rate = f"n/a ({err})"

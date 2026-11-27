@@ -1,7 +1,9 @@
 """Calibration of the three diagnostics on systems with known answers (protocol 3.1 and H0).
 
 Run: ``uv run python -m weather_world_model.calibration.run --out results/calibration``.
-Each run writes one JSON record (code commit, date, configuration, per-seed values, verdicts).
+Each run writes one JSON record (code commit and dirty flag, date, configuration, per-seed
+values, verdicts). Every per-seed entry that trains a model carries ``data_sha256``, the
+fingerprint of its standardised training array (see :mod:`weather_world_model.records`).
 
 With ``--stochastic`` the run measures hypothesis L-S of protocol amendment 3 instead (a
 stochastic predictor on Lorenz-96 next to the deterministic one-step model) and writes
@@ -12,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,20 +41,26 @@ from weather_world_model.diagnostics.arrow import (
 )
 from weather_world_model.diagnostics.modes import fit_dmd
 from weather_world_model.diagnostics.predictability import (
+    ENSEMBLE_MEMBERS,
     ensemble_spread_curve,
-    growth_rate,
-    normalised,
+    growth_fit,
     saturation_distance,
     separation_curve,
 )
-from weather_world_model.jepa import JEPAConfig, SequenceJEPA, train_jepa
+from weather_world_model.jepa import (
+    NOISE_DIM,
+    JEPAConfig,
+    SequenceJEPA,
+    latent_rollout,
+    standardised_encoder,
+    train_jepa,
+)
+from weather_world_model.linalg import pca
+from weather_world_model.records import array_sha256, provenance, summary
 from weather_world_model.seeding import seed_everything
 
 FloatArray = NDArray[np.float64]
 SAMPLE_DT = 0.05  # Lorenz-96 time units between two frames (protocol 3.1)
-GROWTH_CEILING = 0.3  # growth window ends before the normalised separation reaches this
-NOISE_DIM = 8  # noise dimension of the stochastic predictor (protocol amendment 3)
-ENSEMBLE_MEMBERS = 8  # members of the ensemble whose spread is reported
 
 
 @dataclass(frozen=True)
@@ -103,63 +110,13 @@ PROFILES: dict[str, Profile] = {
 }
 
 
-def growth_window(norm_curve: FloatArray) -> tuple[int, int]:
-    """Steps 1 .. last step before the normalised separation reaches ``GROWTH_CEILING``.
-
-    Raises ``ValueError`` when fewer than two steps stay below the ceiling: the separation
-    saturates too early for a slope to be fitted, and a smaller perturbation is needed.
-    """
-    above = np.flatnonzero(norm_curve >= GROWTH_CEILING)
-    end = int(above[0]) - 1 if above.size else len(norm_curve) - 1
-    if end < 2:
-        raise ValueError("separation saturates before step 3; use a smaller epsilon")
-    return 1, end
-
-
-def _encoder(model: SequenceJEPA, mean: float, std: float) -> Any:
-    def encode(x: FloatArray) -> FloatArray:
-        z = model.encode(torch.as_tensor((x - mean) / std, dtype=torch.float32))
-        return np.asarray(z.numpy(), dtype=np.float64)
-
-    return encode
-
-
-def _latent_rollout(model: SequenceJEPA) -> Any:
-    def rollout(z0: FloatArray, k: int) -> FloatArray:
-        out = model.rollout(torch.as_tensor(z0, dtype=torch.float32), k)
-        return np.asarray(out.numpy(), dtype=np.float64)
-
-    return rollout
-
-
 def _growth(curve: FloatArray, saturation: float) -> dict[str, Any]:
-    norm = normalised(curve, saturation)
-    window = growth_window(norm)
-    return {
-        "growth_rate": growth_rate(curve, dt=SAMPLE_DT, window=window),
-        "window": list(window),
-        "normalised_curve": [float(v) for v in norm],
-    }
+    return growth_fit(curve, saturation, dt=SAMPLE_DT)
 
 
 def _safe_growth(curve: FloatArray, saturation: float) -> dict[str, Any]:
     """As :func:`_growth`, but a curve with no fittable window gives a null rate, not an error."""
-    norm = normalised(curve, saturation)
-    try:
-        window = growth_window(norm)
-        rate: float | None = growth_rate(curve, dt=SAMPLE_DT, window=window)
-    except ValueError as err:  # saturates before step 3, or not positive over the window
-        return {
-            "growth_rate": None,
-            "window": None,
-            "error": str(err),
-            "normalised_curve": [float(v) for v in norm],
-        }
-    return {
-        "growth_rate": rate,
-        "window": list(window),
-        "normalised_curve": [float(v) for v in norm],
-    }
+    return growth_fit(curve, saturation, dt=SAMPLE_DT, safe=True)
 
 
 def stochastic_predictability(
@@ -170,7 +127,7 @@ def stochastic_predictability(
     rng = np.random.default_rng([seed, 1])
     generator = torch.Generator().manual_seed(seed)
     k, noise_dim = profile.rollout_k, model.config.noise_dim
-    encode = _encoder(model, mean, std)
+    encode = standardised_encoder(model, mean, std)
     shared = torch.randn((frames.shape[0], k, noise_dim), generator=generator)
 
     def shared_rollout(z0: FloatArray, steps: int) -> FloatArray:
@@ -206,17 +163,19 @@ def calibrate_predictability(
     train = simulate_lorenz96_batch(profile.n_trajectories, profile.n_steps, rng=rng)
     mean, std = float(train.mean()), float(train.std())
     cfg = JEPAConfig(input_dim=train.shape[2])
-    model, history = train_jepa((train - mean) / std, cfg, n_steps=profile.train_steps, seed=seed)
+    standardised = (train - mean) / std
+    model, history = train_jepa(standardised, cfg, n_steps=profile.train_steps, seed=seed)
     frames = simulate_lorenz96_batch(profile.n_test, 1, rng=rng)[:, 0]
-    encode = _encoder(model, mean, std)
+    encode = standardised_encoder(model, mean, std)
     result: dict[str, Any] = {
         "reference_lyapunov": reference,
+        "data_sha256": array_sha256(standardised),
         "collapsed": history.collapsed,
         "final_latent_std": history.latent_std[-1],
     }
     for eps in (1e-3, 1e-2):
         jepa_curve = separation_curve(
-            encode, _latent_rollout(model), frames, epsilon=eps, k=profile.rollout_k, rng=rng
+            encode, latent_rollout(model), frames, epsilon=eps, k=profile.rollout_k, rng=rng
         )
         oracle_curve = separation_curve(
             lambda x: x,
@@ -231,7 +190,7 @@ def calibrate_predictability(
     if stochastic:
         noisy_cfg = JEPAConfig(input_dim=train.shape[2], noise_dim=NOISE_DIM)
         noisy, noisy_history = train_jepa(
-            (train - mean) / std, noisy_cfg, n_steps=profile.train_steps, seed=seed
+            standardised, noisy_cfg, n_steps=profile.train_steps, seed=seed
         )
         result["stochastic"] = {
             "collapsed": noisy_history.collapsed,
@@ -263,8 +222,9 @@ def calibrate_modes(profile: Profile, seed: int) -> dict[str, Any]:
     rank = len(true)
     scale = float(seqs.std())
     cfg = JEPAConfig(input_dim=seqs.shape[2])
-    model, history = train_jepa(seqs / scale, cfg, n_steps=profile.train_steps, seed=seed)
-    z = _encoder(model, 0.0, scale)(seqs.reshape(-1, seqs.shape[2])).reshape(
+    standardised = seqs / scale
+    model, history = train_jepa(standardised, cfg, n_steps=profile.train_steps, seed=seed)
+    z = standardised_encoder(model, 0.0, scale)(seqs.reshape(-1, seqs.shape[2])).reshape(
         seqs.shape[0], seqs.shape[1], -1
     )
     jepa = fit_dmd(z[:, :-1].reshape(-1, z.shape[2]), z[:, 1:].reshape(-1, z.shape[2]), rank=rank)
@@ -273,6 +233,7 @@ def calibrate_modes(profile: Profile, seed: int) -> dict[str, Any]:
     )
     return {
         "true_moduli": [abs(v) for v in true],
+        "data_sha256": array_sha256(standardised),
         "collapsed": history.collapsed,
         "jepa": {
             "moduli": [float(abs(v)) for v in jepa.eigenvalues],
@@ -287,18 +248,11 @@ def calibrate_modes(profile: Profile, seed: int) -> dict[str, Any]:
     }
 
 
-def _pca(train: FloatArray, dims: int) -> tuple[FloatArray, FloatArray]:
-    flat = train.reshape(-1, train.shape[-1])
-    mean = flat.mean(axis=0)
-    _, _, vt = np.linalg.svd(flat - mean, full_matrices=False)
-    return mean, vt[:dims].T
-
-
 def _probe(
     sequences: FloatArray, rng: np.random.Generator, seed: int, features: FeatureSet
 ) -> float:
     n_train = int(0.7 * sequences.shape[0])
-    mean, basis = _pca(sequences[:n_train], min(8, sequences.shape[-1]))
+    mean, basis = pca(sequences[:n_train], min(8, sequences.shape[-1]))
     reduced = (sequences - mean) @ basis
     x, y = arrow_of_time_dataset(reduced, rng, features=features)
     probe = train_probe(x[:n_train], y[:n_train], l2=1e-3, seed=seed)
@@ -324,21 +278,18 @@ def calibrate_arrow(profile: Profile, seed: int) -> dict[str, Any]:
     for name, data in (("lorenz96", l96), ("harmonic", harm)):
         mean, std = float(data.mean()), float(data.std())
         cfg = JEPAConfig(input_dim=data.shape[2])
-        model, _ = train_jepa((data - mean) / std, cfg, n_steps=profile.train_steps, seed=seed)
-        latents = _encoder(model, mean, std)(data.reshape(-1, data.shape[2])).reshape(
+        standardised = (data - mean) / std
+        model, _ = train_jepa(standardised, cfg, n_steps=profile.train_steps, seed=seed)
+        latents = standardised_encoder(model, mean, std)(data.reshape(-1, data.shape[2])).reshape(
             data.shape[0], data.shape[1], -1
         )
         result[name] = {
+            "data_sha256": array_sha256(standardised),
             "jepa_asymmetry": _probe(latents, rng, seed, "asymmetry"),
             "jepa_differences": _probe(latents, rng, seed, "differences"),
             "oracle_asymmetry": _probe(data, rng, seed, "asymmetry"),
         }
     return result
-
-
-def _summary(values: list[float]) -> dict[str, float]:
-    arr = np.asarray(values, dtype=np.float64)
-    return {"mean": float(arr.mean()), "min": float(arr.min()), "max": float(arr.max())}
 
 
 def verdicts(runs: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
@@ -351,17 +302,17 @@ def verdicts(runs: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     c_l96 = [r["lorenz96"]["jepa_asymmetry"] for r in runs["arrow"]]
     c_harm = [r["harmonic"]["jepa_asymmetry"] for r in runs["arrow"]]
     return {
-        "H0-A": {"relative_error": _summary(a_err), "supported": max(a_err) <= 0.30},
+        "H0-A": {"relative_error": summary(a_err), "supported": max(a_err) <= 0.30},
         "H0-B": {
-            "max_relative_error": _summary(b_err),
+            "max_relative_error": summary(b_err),
             "supported": max(b_err) <= 0.10,
             "growth_preserved_all_seeds": all(
                 all(r["jepa"]["growth_preserved"]) for r in runs["modes"]
             ),
         },
         "H0-C": {
-            "lorenz96_accuracy": _summary(c_l96),
-            "harmonic_accuracy": _summary(c_harm),
+            "lorenz96_accuracy": summary(c_l96),
+            "harmonic_accuracy": summary(c_harm),
             "supported": min(c_l96) > 0.80 and max(c_harm) < 0.60,
         },
     }
@@ -402,7 +353,7 @@ def run_stochastic(profile_name: str) -> dict[str, Any]:
     profile = PROFILES[profile_name]
     runs = [calibrate_predictability(profile, seed, stochastic=True) for seed in profile.seeds]
     return {
-        "code_commit": _git_commit(),
+        **provenance(),
         "date": datetime.now(UTC).isoformat(timespec="seconds"),
         "profile": profile_name,
         "config": asdict(profile),
@@ -416,19 +367,6 @@ def run_stochastic(profile_name: str) -> dict[str, Any]:
     }
 
 
-def _git_commit() -> str:
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return "unknown"
-    return out.stdout.strip()
-
-
 def run(profile_name: str) -> dict[str, Any]:
     """Run the three calibrations for every seed of the profile and apply the criteria."""
     profile = PROFILES[profile_name]
@@ -438,7 +376,7 @@ def run(profile_name: str) -> dict[str, Any]:
         runs["modes"].append(calibrate_modes(profile, seed))
         runs["arrow"].append(calibrate_arrow(profile, seed))
     return {
-        "code_commit": _git_commit(),
+        **provenance(),
         "date": datetime.now(UTC).isoformat(timespec="seconds"),
         "profile": profile_name,
         "config": asdict(profile),

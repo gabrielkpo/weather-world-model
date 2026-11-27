@@ -25,20 +25,20 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 
-from weather_world_model.calibration.run import _git_commit
-from weather_world_model.diagnostics.predictability import saturation_distance
+from weather_world_model.diagnostics.predictability import ENSEMBLE_MEMBERS, saturation_distance
 from weather_world_model.diagnostics.readouts import ReadoutProbes, fit_readout_probes
 from weather_world_model.jepa import JEPAConfig, SequenceJEPA, encode_numpy
+from weather_world_model.records import provenance
 from weather_world_model.worlds.qg import (
     DIAGNOSTIC_NAMES,
     QGConfig,
     QGModel,
     diagnostics,
+    twin_runs,
     velocity_saturation,
 )
 from weather_world_model.worlds.run_qg import (
     AMENDMENT3_MODELS,
-    ENSEMBLE_MEMBERS,
     PROFILES,
     TORCH_THREADS,
     QGData,
@@ -91,24 +91,19 @@ def decode_array(text: str, shape: tuple[int, ...], scale: float, dtype: str) ->
 def run_worlds(
     start: QGModel, sample_every: int, n_frames: int, rng: np.random.Generator
 ) -> dict[str, Any]:
-    """Advance world A (``start``) and its perturbed twin B; same rule as ``twin_divergence``.
+    """Advance world A (``start``) and its perturbed twin B; the twins of ``twin_runs``.
 
     Returns, per world, the upper-layer eddy winds ``(n_frames, 2, H, W)``; for A the true
     diagnostics per frame; and the RMS upper-layer velocity difference between A and B.
     """
-    a, b = start.copy(), start.copy()
-    q = a.state
-    rms = np.sqrt(np.mean(q**2, axis=(1, 2), keepdims=True))
-    b.state = q + EPSILON * rms * rng.standard_normal(q.shape)
-    a.state = q  # same restart (no AB history) for both twins
     n = start.config.nx
     winds = {name: np.empty((n_frames, 2, n, n)) for name in ("A", "B")}
     diags = np.empty((n_frames, len(DIAGNOSTIC_NAMES)))
     separation = np.empty(n_frames)
-    for t in range(n_frames):
-        if t:
-            a.step(sample_every)
-            b.step(sample_every)
+    twins = twin_runs(
+        start, epsilon=EPSILON, n_samples=n_frames - 1, sample_every=sample_every, rng=rng
+    )
+    for t, (a, b) in enumerate(twins):
         for name, world in (("A", a), ("B", b)):
             u, v = world.velocity()
             winds[name][t] = np.stack([u[0], v[0]])
@@ -250,7 +245,7 @@ def build(
         log(f"{name} curves done")
     return {
         "meta": {
-            "code_commit": _git_commit(),
+            **provenance(),
             "date": datetime.now(UTC).isoformat(timespec="seconds"),
             "seed": seed,
             "conv_norm": conv_norm,

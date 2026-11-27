@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -99,7 +101,7 @@ def test_count_regions_periodic() -> None:
 
 def test_snapshots_shapes_and_alignment() -> None:
     config = QGConfig(nx=16)
-    kw = {"n_trajectories": 2, "n_steps": 30, "sample_every": 10, "spin_up": 20}
+    kw: dict[str, Any] = {"n_trajectories": 2, "n_steps": 30, "sample_every": 10, "spin_up": 20}
     snaps, diags, names = simulate_with_diagnostics(
         config, rng=np.random.default_rng(1), field="q", **kw
     )

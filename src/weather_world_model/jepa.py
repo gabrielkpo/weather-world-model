@@ -13,6 +13,13 @@ With ``noise_dim > 0`` the predictor is stochastic: it receives ``concat(z_t, ep
 ``eps ~ N(0, I)`` and is trained (one-step only) with the two-sample energy score
 ``mean_i ||z_hat_i - z*|| - 0.5 ||z_hat_1 - z_hat_2||`` (Euclidean norms) in place of the L1
 error. ``noise_dim = 0`` (default) is the deterministic model, unchanged.
+
+Known limitation: :func:`train_jepa` draws its batches from ``np.random.default_rng(seed)``,
+the generator that :func:`~weather_world_model.seeding.seed_everything` returns for the
+same seed. A caller that generates its training data from that generator with the same
+seed (the calibration does) therefore uses one random stream twice: the batch indices
+repeat the first draws that produced the data. This is kept so that existing records stay
+reproducible; see :func:`train_jepa`.
 """
 
 import copy
@@ -27,6 +34,9 @@ from numpy.typing import NDArray
 from torch import Tensor, nn
 
 from weather_world_model.seeding import seed_everything
+
+FloatArray = NDArray[np.float64]
+NOISE_DIM = 8  # noise dimension of the stochastic predictor (protocol amendment 3)
 
 
 @dataclass(frozen=True)
@@ -375,6 +385,31 @@ def encode_numpy(
     return out.reshape(*lead, model.config.latent_dim)
 
 
+def standardised_encoder(
+    model: SequenceJEPA, mean: float, std: float
+) -> Callable[[FloatArray], FloatArray]:
+    """``x -> encode((x - mean) / std)`` on NumPy state vectors ``(B, D)``, as float64."""
+
+    def encode(x: FloatArray) -> FloatArray:
+        z = model.encode(torch.as_tensor((x - mean) / std, dtype=torch.float32))
+        return np.asarray(z.numpy(), dtype=np.float64)
+
+    return encode
+
+
+def latent_rollout(model: SequenceJEPA) -> Callable[[FloatArray, int], FloatArray]:
+    """``(z0, k) -> rollout`` on NumPy latents ``(B, d) -> (B, k+1, d)``, as float64.
+
+    A stochastic predictor draws fresh noise from PyTorch's global generator.
+    """
+
+    def rollout(z0: FloatArray, k: int) -> FloatArray:
+        out = model.rollout(torch.as_tensor(z0, dtype=torch.float32), k)
+        return np.asarray(out.numpy(), dtype=np.float64)
+
+    return rollout
+
+
 def train_jepa(
     sequences: NDArray[np.floating],
     config: JEPAConfig,
@@ -388,6 +423,13 @@ def train_jepa(
     Each step samples windows of ``rollout_steps + 1`` consecutive frames (pairs by default)
     uniformly over all sequences and start times, and minimises :meth:`SequenceJEPA.rollout_loss`.
     ``progress(step, loss, latent_std)``, if given, is called at every logged step.
+
+    Randomness: ``seed_everything(seed)`` seeds Python's and PyTorch's global generators
+    (weight initialisation, the noise of a stochastic predictor), and the batch indices are
+    drawn from the NumPy generator it returns, ``np.random.default_rng(seed)``. Known
+    limitation: if the caller drew ``sequences`` from a generator seeded with the same
+    ``seed``, the batch sampling replays the same stream as the data generation. Changing
+    this would change every existing record, so it is kept and documented.
     """
     shape = config.frame_shape
     k = config.rollout_steps

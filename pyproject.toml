@@ -55,11 +55,16 @@ select = ["E", "W", "F", "I", "B", "UP", "S", "N", "SIM", "RUF", "NPY"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
 
 [[tool.mypy.overrides]]
 module = ["torch.*"]
 follow_imports = "silent"
+
+# scripts/qg_preview.py plots with matplotlib, which is not a dependency of the package.
+[[tool.mypy.overrides]]
+module = ["matplotlib", "matplotlib.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

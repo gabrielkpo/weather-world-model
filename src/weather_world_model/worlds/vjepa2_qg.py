@@ -53,14 +53,14 @@ from numpy.typing import NDArray
 from torch import Tensor
 from torch.nn import functional
 
-from weather_world_model.calibration.run import _pca
 from weather_world_model.diagnostics.arrow import (
     arrow_of_time_dataset,
     probe_accuracy,
     train_probe,
 )
 from weather_world_model.diagnostics.readouts import fit_readout_probes
-from weather_world_model.worlds.qg import DIAGNOSTIC_NAMES
+from weather_world_model.linalg import pca
+from weather_world_model.worlds.qg import DIAGNOSTIC_NAMES, THRESHOLDED
 
 FloatArray = NDArray[np.float64]
 Encoder = Callable[[Tensor], Tensor]
@@ -72,7 +72,6 @@ PATCH_SIZE = 16
 TUBELET = 2
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
-THRESHOLDED = ("kinetic_energy", "available_potential_energy", "enstrophy", "jet_speed_max")
 WV_MARGIN = 0.05
 PROBE_SEEDS = (0, 1, 2)
 
@@ -224,7 +223,8 @@ def frame_latents(
         for (i, s), z in zip(batch, lat, strict=True):
             first_new = 0 if s % length == 0 else (starts[-2] + length) - s
             out[i, s + first_new : s + length] = z[first_new:]
-    assert out is not None  # noqa: S101 (narrowing; jobs is never empty)
+    if out is None:  # pragma: no cover (narrowing; jobs is never empty)
+        raise RuntimeError("no clip was encoded")
     return out
 
 
@@ -242,7 +242,7 @@ def clip_latents(
     """W-C per-position latents ``(C, L, D)`` of the clips cut from runs ``(N, T, 2, H, W)``.
 
     Clips start every ``clip_stride`` snapshots and are ordered start-major, as
-    :func:`weather_world_model.worlds.run_qg.clips` orders them. With ``reverse`` the clip
+    :func:`weather_world_model.diagnostics.arrow.clips` orders them. With ``reverse`` the clip
     is encoded as the time-reversed video, so its positions are in reversed time order.
     """
     n, t_len = runs.shape[:2]
@@ -301,7 +301,7 @@ def asymmetry_arrow_probe(
     video, put back in its own time order before the dataset reverses it.
     """
     rng = np.random.default_rng(seed)
-    mean, basis = _pca(train_forward, min(8, train_forward.shape[-1]))
+    mean, basis = pca(train_forward, min(8, train_forward.shape[-1]))
 
     def proj(x: FloatArray) -> FloatArray:
         return np.asarray((x - mean) @ basis, dtype=np.float64)
@@ -403,12 +403,16 @@ def small_jepa_reference(record: dict[str, Any]) -> dict[str, Any]:
 def record_norm(record: dict[str, Any], path: Path) -> str:
     """Normalisation of the small JEPA's conv encoder in a record: ``"group"`` or ``"none"``.
 
-    Read from a ``conv_norm`` entry of the record's configuration when present; otherwise a
-    file name containing ``nonorm`` or ``no-norm`` means ``"none"``; otherwise ``"group"``
-    (the default of every record written before that option existed).
+    Read from the record's top-level ``conv_norm`` entry (where
+    :mod:`~weather_world_model.worlds.run_qg` writes it) when present, then from a
+    ``conv_norm`` entry of its configuration; otherwise a file name containing ``nonorm`` or
+    ``no-norm`` means ``"none"``; otherwise ``"group"`` (the default of every record written
+    before that option existed).
     """
+    if record.get("conv_norm") is not None:
+        return str(record["conv_norm"])
     for section in ("config", "jepa_config"):
-        value = record.get(section, {}).get("conv_norm")
+        value = (record.get(section) or {}).get("conv_norm")
         if value is not None:
             return str(value)
     stem = path.stem.lower()
@@ -443,6 +447,14 @@ def wv_comparison(
     verdicts = []
     for name, ref in references.items():
         models = [ref[m] for m in ("k1", "k8") if m in ref]
+        if not models:
+            out["against"][name] = {
+                "conv_norm": norms[name],
+                "small_jepa": ref,
+                "supported": None,
+                "note": "no k1 or k8 model in this record: not compared",
+            }
+            continue
         best_acc = max(m["arrow_accuracy"] for m in models)
         best_r2 = max(m["mean_r2_thresholded"] for m in models)
         entry: dict[str, Any] = {

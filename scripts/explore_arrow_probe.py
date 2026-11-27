@@ -22,12 +22,13 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 
-from weather_world_model.calibration.run import _git_commit
 from weather_world_model.diagnostics.arrow import (
+    arrow_of_time_dataset,
+    clips,
     probe_accuracy,
-    time_asymmetry_features,
     train_probe,
 )
+from weather_world_model.records import provenance
 from weather_world_model.worlds.qg import QGConfig, simulate_snapshots
 
 FloatArray = NDArray[np.float64]
@@ -38,18 +39,11 @@ L2 = 1e-3  # the protocol's probe regularisation
 PROBE_SEEDS = (0, 1, 2)
 
 
-def clips(seqs: FloatArray, clip_len: int, stride: int) -> FloatArray:
-    starts = range(0, seqs.shape[1] - clip_len + 1, stride)
-    return np.concatenate([seqs[:, s : s + clip_len] for s in starts], axis=0)
-
-
 def dataset(
     forward: FloatArray, alternate: FloatArray, rng: np.random.Generator
 ) -> tuple[FloatArray, NDArray[np.int64]]:
     """Label 1 = forward clip; label 0 = time-reversed clip taken from ``alternate``."""
-    labels = rng.integers(0, 2, size=forward.shape[0])
-    seqs = np.where(labels[:, None, None] == 1, forward, alternate[:, ::-1])
-    return time_asymmetry_features(seqs), labels.astype(np.int64)
+    return arrow_of_time_dataset(forward, rng, features="asymmetry", reversed_from=alternate)
 
 
 def main() -> None:
@@ -124,7 +118,7 @@ def main() -> None:
 
     record = {
         "exploratory": True,
-        "code_commit": _git_commit(),
+        **provenance(),
         "date": datetime.now(UTC).isoformat(timespec="seconds"),
         "config": {
             "n_runs": N_RUNS,

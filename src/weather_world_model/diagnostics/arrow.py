@@ -20,9 +20,17 @@ import torch
 from numpy.typing import NDArray
 from torch import Tensor, nn
 
-from weather_world_model.seeding import seed_everything
-
 FeatureSet = Literal["differences", "asymmetry"]
+
+
+def clips(sequences: NDArray[np.floating], clip_len: int, stride: int) -> NDArray[np.float64]:
+    """Clips ``(N * per, clip_len, d)`` cut from ``(N, T, d)`` with the given stride.
+
+    Clips are ordered start-major: all sequences at the first start, then the next start.
+    """
+    seqs = np.asarray(sequences, dtype=np.float64)
+    starts = range(0, seqs.shape[1] - clip_len + 1, stride)
+    return np.concatenate([seqs[:, s : s + clip_len] for s in starts], axis=0)
 
 
 def time_asymmetry_features(sequences: NDArray[np.floating]) -> NDArray[np.float64]:
@@ -88,7 +96,6 @@ def train_probe(
     max_iter: int = 200,
 ) -> LinearProbe:
     """Full-batch L-BFGS logistic regression with L2 penalty ``l2 * ||w||^2``."""
-    seed_everything(seed)
     if not np.isin(np.asarray(labels), (0, 1)).all():
         raise ValueError("labels must be 0 or 1")
     x_np = np.asarray(features, dtype=np.float64)

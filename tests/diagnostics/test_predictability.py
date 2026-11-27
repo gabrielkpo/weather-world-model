@@ -2,9 +2,10 @@ import numpy as np
 import pytest
 
 from weather_world_model.diagnostics.predictability import (
+    growth_fit,
     growth_rate,
+    growth_window,
     normalised,
-    predictability_horizon,
     saturation_distance,
     separation_curve,
 )
@@ -34,14 +35,12 @@ def test_growth_rate_from_linear_rollout() -> None:
     assert growth_rate(curve, dt=dt, window=(0, 10)) == pytest.approx(np.log(lam) / dt, rel=1e-6)
 
 
-def test_saturation_normalisation_horizon() -> None:
+def test_saturation_and_normalisation() -> None:
     rng = np.random.default_rng(1)
     s = saturation_distance(rng.standard_normal((200, 3)), rng)
     assert 1.5 < s < 3.0
     n = normalised(np.array([0.1, 1.0, 2.0]), 2.0)
     np.testing.assert_allclose(n, [0.05, 0.5, 1.0])
-    assert predictability_horizon(n) == 1
-    assert predictability_horizon(n, threshold=2.0) is None
 
 
 def test_validation() -> None:
@@ -77,3 +76,28 @@ def test_ensemble_spread_of_a_random_walk() -> None:
     assert np.all(ensemble_spread_curve(frozen, np.ones((4, 3)), k=5) == 0.0)
     with pytest.raises(ValueError, match="two ensemble members"):
         ensemble_spread_curve(frozen, np.ones((4, 3)), k=5, n_members=1)
+
+
+def test_growth_window_stops_before_ceiling() -> None:
+    curve = np.array([0.001, 0.002, 0.01, 0.05, 0.2, 0.5, 0.9])
+    assert growth_window(curve) == (1, 4)
+    assert growth_window(np.full(5, 0.01)) == (1, 4)
+    with pytest.raises(ValueError, match="smaller epsilon"):
+        growth_window(np.array([0.01, 0.2, 0.5, 0.9]))
+
+
+def test_growth_fit_entries() -> None:
+    curve = 1e-3 * np.exp(0.5 * np.arange(12))
+    full = growth_fit(curve, 1.0, dt=1.0)
+    assert list(full) == ["growth_rate", "window", "normalised_curve"]
+    assert full["growth_rate"] == pytest.approx(0.5)
+    assert full["window"] == [1, 11]
+    sub = growth_fit(curve, 1.0, dt=1.0, stored_curve=lambda c: [float(c[0])])
+    assert list(sub) == ["normalised_curve_subsampled", "growth_rate", "window"]
+    assert sub["normalised_curve_subsampled"] == [pytest.approx(1e-3)]
+    saturated = np.array([0.1, 0.5, 0.9, 1.0])
+    with pytest.raises(ValueError, match="smaller epsilon"):
+        growth_fit(saturated, 1.0, dt=1.0)
+    safe = growth_fit(saturated, 1.0, dt=1.0, safe=True)
+    assert safe["growth_rate"] is None and safe["window"] is None
+    assert "smaller epsilon" in safe["error"]

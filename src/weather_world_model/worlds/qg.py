@@ -56,14 +56,14 @@ from __future__ import annotations
 
 import copy as _copy
 from collections import deque
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 from numpy.typing import NDArray
 
-from weather_world_model.calibration.run import growth_window
-from weather_world_model.diagnostics.predictability import growth_rate, normalised
+from weather_world_model.diagnostics.predictability import growth_rate, growth_window, normalised
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
@@ -77,6 +77,13 @@ DIAGNOSTIC_NAMES: tuple[str, ...] = (
     "max_cyclonic_vorticity",
     "max_anticyclonic_vorticity",
     "n_vortices",
+)
+# The four diagnostics with a pass threshold in the step-2 criteria (W-P, W-R, W-V).
+THRESHOLDED: tuple[str, ...] = (
+    "kinetic_energy",
+    "available_potential_energy",
+    "enstrophy",
+    "jet_speed_max",
 )
 
 # Coherent-vortex rule (Isern-Fontanet et al. 2003, Okubo-Weiss): a vortex is a connected
@@ -117,7 +124,7 @@ class QGConfig:
         return 1.0 / (self.rd**2 * (1.0 + self.delta))
 
     @property
-    def F2(self) -> float:  # noqa: N802
+    def F2(self) -> float:  # noqa: N802 (physics notation)
         return self.delta * self.F1
 
     @property
@@ -343,6 +350,7 @@ def simulate_with_diagnostics(
     spin_up: int,
     rng: np.random.Generator,
     field: Field = "uv",
+    on_snapshot: Callable[[int, int, QGModel], None] | None = None,
 ) -> tuple[NDArray[np.float32], FloatArray, tuple[str, ...]]:
     """Snapshots ``(N, T, 2, ny, nx)`` (float32), aligned diagnostics ``(N, T, Q)`` and names.
 
@@ -350,7 +358,9 @@ def simulate_with_diagnostics(
     spun up for ``spin_up`` steps, then run ``n_steps`` steps, recording one snapshot every
     ``sample_every`` steps: ``T = n_steps // sample_every``. ``field`` is ``"q"`` (PV
     anomaly of both layers), ``"psi"`` (streamfunction of both layers) or ``"uv"`` (upper
-    layer eddy ``u`` and ``v``, the wind map; default).
+    layer eddy ``u`` and ``v``, the wind map; default). ``on_snapshot(i, t, model)``, if
+    given, is called after snapshot ``t`` of trajectory ``i`` is recorded (it must not
+    change ``model``).
     """
     if field not in ("q", "psi", "uv"):
         raise ValueError(f"unknown field {field!r}; expected 'q', 'psi' or 'uv'")
@@ -368,6 +378,8 @@ def simulate_with_diagnostics(
             snaps[i, t] = _field(model, field)
             d = diagnostics(model)
             diags[i, t] = [d[name] for name in DIAGNOSTIC_NAMES]
+            if on_snapshot is not None:
+                on_snapshot(i, t, model)
     return snaps, diags, DIAGNOSTIC_NAMES
 
 
@@ -425,6 +437,34 @@ def _upper_velocity(model: QGModel) -> FloatArray:
     return np.stack([u[0], v[0]])
 
 
+def twin_runs(
+    model: QGModel,
+    *,
+    epsilon: float,
+    n_samples: int,
+    sample_every: int,
+    rng: np.random.Generator,
+) -> Iterator[tuple[QGModel, QGModel]]:
+    """Twin runs ``(a, b)`` at ``n_samples + 1`` sample times (the first is the start).
+
+    ``a`` restarts from the current state of ``model``; ``b`` from the same state with ``q``
+    perturbed by Gaussian noise of std ``epsilon * RMS(q_k)`` in each layer (one draw from
+    ``rng``). Both advance ``sample_every`` steps between samples; ``model`` itself is not
+    modified, and the yielded models must not be modified by the caller.
+    """
+    a = model.copy()
+    b = model.copy()
+    q = a.state
+    rms = np.sqrt(np.mean(q**2, axis=(1, 2), keepdims=True))
+    b.state = q + epsilon * rms * rng.standard_normal(q.shape)
+    a.state = q  # same restart (no AB history) for both twins
+    for s in range(n_samples + 1):
+        if s:
+            a.step(sample_every)
+            b.step(sample_every)
+        yield a, b
+
+
 def twin_divergence(
     model: QGModel,
     *,
@@ -435,21 +475,13 @@ def twin_divergence(
 ) -> FloatArray:
     """RMS upper-layer velocity difference between twin runs, shape ``(n_samples + 1,)``.
 
-    The twin starts from the current state with ``q`` perturbed by Gaussian noise of std
-    ``epsilon * RMS(q_k)`` in each layer; both runs advance ``sample_every`` steps between
-    samples. ``model`` itself is not modified.
+    The twins are those of :func:`twin_runs`. ``model`` itself is not modified.
     """
-    a = model.copy()
-    b = model.copy()
-    q = a.state
-    rms = np.sqrt(np.mean(q**2, axis=(1, 2), keepdims=True))
-    b.state = q + epsilon * rms * rng.standard_normal(q.shape)
-    a.state = q  # same restart (no AB history) for both twins
     out = np.empty(n_samples + 1)
-    for s in range(n_samples + 1):
-        if s:
-            a.step(sample_every)
-            b.step(sample_every)
+    twins = twin_runs(
+        model, epsilon=epsilon, n_samples=n_samples, sample_every=sample_every, rng=rng
+    )
+    for s, (a, b) in enumerate(twins):
         d = _upper_velocity(a) - _upper_velocity(b)
         out[s] = np.sqrt(np.mean(np.sum(d**2, axis=0)))
     return out

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from weather_world_model.calibration.run import _git_commit
+from weather_world_model.records import provenance
 from weather_world_model.worlds.qg import QGConfig, QGModel, diagnostics
 
 SEEDS = (0, 1)
@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         print(f"seed {seed}: " + " ".join(f"{v:.3f}" for v in series), flush=True)
     record = {
-        "code_commit": _git_commit(),
+        **provenance(),
         "date": datetime.now(UTC).isoformat(timespec="seconds"),
         "qg_config": asdict(config),
         "start": "cold start (the simulator's random initial state), no spin-up",
