@@ -1,0 +1,290 @@
+{
+  "code_commit": "e760675b97fb0d2cb684377a52ccf5efec529745",
+  "install_mode": "git",
+  "date": "2026-11-27T15:28:51+00:00",
+  "dry_run": false,
+  "model_id": "facebook/vjepa2-vitl-fpc64-256",
+  "model_revision": "b3c1679b7c34d3255ef3547f27c7b226aefab26f",
+  "variant": "frozen",
+  "profile": "full",
+  "config": {
+    "n_runs": 80,
+    "snapshots": 100,
+    "sample_every": 20,
+    "spin_up": 12000,
+    "train_steps": 3000,
+    "batch_size": 4,
+    "conv_channels": [
+      32,
+      64,
+      96,
+      128
+    ],
+    "separation_k": 150,
+    "starts_per_test_run": 2,
+    "clip_len": 16,
+    "clip_stride": 8,
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "data_seed": 1000,
+    "stationarity_tolerance": 0.1,
+    "video": {
+      "image_size": 256,
+      "patch_size": 16,
+      "tubelet": 2,
+      "clip_len": 16,
+      "clip_stride": 8
+    },
+    "dtype": "torch.float16",
+    "probe_seeds": [
+      0,
+      1,
+      2
+    ]
+  },
+  "qg_config": {
+    "nx": 64,
+    "L": 6.283185307179586,
+    "beta": 6.0,
+    "rd": 0.25,
+    "delta": 1.0,
+    "U1": 1.0,
+    "U2": 0.0,
+    "rek": 1.0,
+    "dt": 0.005,
+    "filterfac": 23.6,
+    "filter_cutoff": 2.0420352248333655,
+    "init_amplitude": 0.5
+  },
+  "split_runs": {
+    "train": 56,
+    "val": 12,
+    "test": 12
+  },
+  "diagnostic_names": [
+    "kinetic_energy",
+    "available_potential_energy",
+    "enstrophy",
+    "jet_speed_max",
+    "max_cyclonic_vorticity",
+    "max_anticyclonic_vorticity",
+    "n_vortices"
+  ],
+  "stationarity": {
+    "quantity": "kinetic_energy",
+    "runs": "train",
+    "first_third_mean": 0.9282524149090478,
+    "last_third_mean": 0.9520704509714388,
+    "relative_difference": 0.02565900791620868,
+    "tolerance": 0.1,
+    "passes": true
+  },
+  "data_check": {
+    "qg-stationary-nonorm": {
+      "same_seed_and_splits": true,
+      "record_kinetic_energy_first_third": 0.9346823096700346,
+      "this_run_kinetic_energy_first_third": 0.9282524149090478
+    },
+    "qg-stationary": {
+      "same_seed_and_splits": true,
+      "record_kinetic_energy_first_third": 0.9346823096700346,
+      "this_run_kinetic_energy_first_third": 0.9282524149090478
+    }
+  },
+  "environment": {
+    "python": "3.13.16",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.24.1",
+    "device": "cuda",
+    "gpu": "Tesla T4",
+    "peak_gpu_memory_gb": 1.745091438293457
+  },
+  "seconds": {
+    "simulate_seconds": 958.993345751,
+    "frozen_seconds": 948.0345019809997,
+    "random_control_seconds": 195.05677369100022,
+    "wall_seconds": 2125.230417358
+  },
+  "frozen": {
+    "render_scales": {
+      "u_mean": 1.0840625429821085e-11,
+      "u_std": 1.2970285526739949,
+      "v_mean": -1.0282870199434496e-11,
+      "v_std": 1.297535637519615,
+      "speed_max": 4.409991328947574
+    },
+    "latent_dim": 1024,
+    "readouts": {
+      "kinetic_energy": {
+        "alpha": 10.0,
+        "val_r2": 0.8633548435620985,
+        "test_r2": 0.8121808734984298
+      },
+      "available_potential_energy": {
+        "alpha": 100.0,
+        "val_r2": 0.5083265968017313,
+        "test_r2": 0.4610349780116263
+      },
+      "enstrophy": {
+        "alpha": 10.0,
+        "val_r2": 0.8283733625007988,
+        "test_r2": 0.7779920479840864
+      },
+      "jet_speed_max": {
+        "alpha": 100.0,
+        "val_r2": 0.3098381786458393,
+        "test_r2": 0.4926982067945891
+      },
+      "max_cyclonic_vorticity": {
+        "alpha": 1000.0,
+        "val_r2": 0.12186808062329302,
+        "test_r2": 0.09410891920578057
+      },
+      "max_anticyclonic_vorticity": {
+        "alpha": 100.0,
+        "val_r2": 0.1831760401182242,
+        "test_r2": 0.12317503953989517
+      },
+      "n_vortices": {
+        "alpha": 1000.0,
+        "val_r2": 0.06554447384092543,
+        "test_r2": -0.034529347362954654
+      }
+    },
+    "test_latent_std": 0.6745212373506,
+    "arrow_clip_plain": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "arrow_asymmetry_plain": [
+      0.9621212121212122,
+      0.9696969696969697,
+      0.9924242424242424
+    ],
+    "arrow_clip_mirrored": [
+      0.9772727272727273,
+      1.0,
+      0.9924242424242424
+    ],
+    "arrow_asymmetry_mirrored": [
+      0.7348484848484849,
+      0.7045454545454546,
+      0.7045454545454546
+    ],
+    "arrow_probe_seeds": [
+      0,
+      1,
+      2
+    ],
+    "n_clips": {
+      "train": 616,
+      "test": 132
+    }
+  },
+  "random_control": {
+    "render_scales": {
+      "u_mean": 1.0840625429821085e-11,
+      "u_std": 1.2970285526739949,
+      "v_mean": -1.0282870199434496e-11,
+      "v_std": 1.297535637519615,
+      "speed_max": 4.409991328947574
+    },
+    "latent_dim": 1024,
+    "readouts": {
+      "kinetic_energy": {
+        "alpha": 100.0,
+        "val_r2": 0.9882994019990635,
+        "test_r2": 0.9869132203241046
+      },
+      "available_potential_energy": {
+        "alpha": 1000.0,
+        "val_r2": 0.8213877140069132,
+        "test_r2": 0.7126492179012863
+      },
+      "enstrophy": {
+        "alpha": 100.0,
+        "val_r2": 0.9753088639364019,
+        "test_r2": 0.9640792457535492
+      },
+      "jet_speed_max": {
+        "alpha": 100.0,
+        "val_r2": 0.4433151375058624,
+        "test_r2": 0.5383554061867699
+      },
+      "max_cyclonic_vorticity": {
+        "alpha": 1000.0,
+        "val_r2": 0.18987342229058235,
+        "test_r2": 0.058343107655048354
+      },
+      "max_anticyclonic_vorticity": {
+        "alpha": 1000.0,
+        "val_r2": 0.1891778771922693,
+        "test_r2": 0.16411625452784884
+      },
+      "n_vortices": {
+        "alpha": 1000.0,
+        "val_r2": 0.13452809155389245,
+        "test_r2": 0.1039054235769511
+      }
+    },
+    "test_latent_std": 0.09134246170556326
+  },
+  "W-V": {
+    "criterion": "V-JEPA 2 W-C accuracy and mean W-P R2 (4 thresholded quantities) both >= best small JEPA (k1, k8; seed means) + 0.05",
+    "vjepa2": {
+      "arrow_accuracy_clip": 1.0,
+      "arrow_accuracy_asymmetry": 0.9747474747474748,
+      "mean_r2_thresholded": 0.6359765265721828,
+      "mean_r2_all": 0.3895229596673504
+    },
+    "against": {
+      "qg-stationary-nonorm": {
+        "conv_norm": "none",
+        "small_jepa": {
+          "code_commit": "bfa52fa4ac2b2b561fe4cfc93acf2cad7f6ddc2d",
+          "k1": {
+            "arrow_accuracy": 0.6944444444444445,
+            "arrow_accuracy_mirrored": 0.5025252525252525,
+            "mean_r2_thresholded": 0.28109916253575934,
+            "mean_r2_all": 0.1510361931488413
+          },
+          "k8": {
+            "arrow_accuracy": 0.7272727272727274,
+            "arrow_accuracy_mirrored": 0.5530303030303031,
+            "mean_r2_thresholded": 0.4329977343199592,
+            "mean_r2_all": 0.24000132312574962
+          }
+        },
+        "accuracy_margin": 0.2727272727272726,
+        "r2_margin": 0.20297879225222365,
+        "supported": true
+      },
+      "qg-stationary": {
+        "conv_norm": "group",
+        "small_jepa": {
+          "code_commit": "c222f3e6d4d470aeaafa2f8b707204c45f8e6cbc",
+          "k1": {
+            "arrow_accuracy": 0.7575757575757577,
+            "arrow_accuracy_mirrored": 0.5631313131313131,
+            "mean_r2_thresholded": 0.09413147972827933,
+            "mean_r2_all": 0.036307312499509255
+          },
+          "k8": {
+            "arrow_accuracy": 0.8383838383838383,
+            "arrow_accuracy_mirrored": 0.5404040404040404,
+            "mean_r2_thresholded": 0.109102568612037,
+            "mean_r2_all": 0.040662709616867916
+          }
+        },
+        "accuracy_margin": 0.16161616161616166,
+        "r2_margin": 0.5268739579601458,
+        "supported": null
+      }
+    },
+    "supported": true
+  }
+}
