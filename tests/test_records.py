@@ -6,6 +6,9 @@ import pytest
 from weather_world_model import records
 
 
+@pytest.mark.skipif(
+    records.git_state()[1] is None, reason="needs a Git checkout (not a source archive)"
+)
 def test_provenance_in_a_checkout() -> None:
     prov = records.provenance()
     assert set(prov) == {"code_commit", "code_dirty"}
