@@ -16,7 +16,8 @@ Each record's `code_commit` is the last commit of the pull-request branch on whi
 | `results/qg/qg-energy-long.json` | #24, record QG data on a stationary flow (amendment 5) |
 | `results/qg/qg-stationary.json` | #25, report step 2 on a stationary QG flow (amendment 5) |
 | `results/exploratory/energy-readout-qg.json` | #26, show that GroupNorm erases the field amplitude the energy probes need |
-| `results/qg/qg-stationary-nonorm.json` | this pull request, step-2 rerun with an encoder without normalisation (amendment 6); produced on branch commit `bfa52fa` |
+| `results/qg/qg-stationary-nonorm.json` | #34, step-2 rerun with an encoder without normalisation (amendment 6); produced on branch commit `bfa52fa` |
+| `results/qg/qg-vjepa2.json` | this pull request, frozen V-JEPA 2 on the QG world (W-V, amendment 2); produced on `main` commit `e760675` on a Kaggle T4 |
 
 Records carry no data hash and no bootstrap intervals; uncertainty is the minimum to maximum over seeds (protocol amendment 7).
 
@@ -274,6 +275,23 @@ Run record: [`results/qg/qg-stationary-nonorm.json`](../results/qg/qg-stationary
 - **Without normalisation, energies become readable, but the trained encoders read them worse than random weights.** This confirms on three seeds the exploratory result below: JEPA training discards part of the amplitude information. The multi-step model (k8) keeps more of it than the one-step model.
 - **The stochastic model collapsed on all three seeds** (latent standard deviation below the 1e-2 threshold, loss flat near 0.99). Its readouts (`stochastic_reported` in the record, for example kinetic energy R² 0.76 to 0.87) are therefore not interpreted, and W-S is not tested in this configuration. The deterministic k1 and k8 models did not collapse.
 - The arrow-of-time probe again falls to chance on the mirrored control: it reads the propagation direction, not irreversibility.
+
+### Frozen V-JEPA 2 on the QG world (W-V)
+
+Run record: [`results/qg/qg-vjepa2.json`](../results/qg/qg-vjepa2.json) (code commit `e760675`, install mode `git`, model `facebook/vjepa2-vitl-fpc64-256` at a pinned revision, Kaggle Tesla T4, 35 min). Same data seed and splits as the small-JEPA records (`data_check`); the simulation ran on another CPU, so snapshots differ with the same statistics (kinetic energy over the first third 0.928 against 0.935). Frozen encoder, no predictor; W-C probe over three probe seeds.
+
+| Readout | Small JEPA k8, no normalisation | V-JEPA 2, pretrained | V-JEPA 2, random weights |
+|---|---|---|---|
+| Kinetic energy R² | 0.40 to 0.66 | 0.81 | 0.99 |
+| Enstrophy R² | 0.38 to 0.67 | 0.78 | 0.96 |
+| Available potential energy R² | 0.21 to 0.50 | 0.46 | 0.71 |
+| Jet speed R² | 0.26 to 0.33 | 0.49 | 0.54 |
+| Arrow of time, plain reversal | 63 to 82 % | 100 % | not measured |
+| Arrow of time, mirrored control | 52 to 59 % | 98 to 100 % | not measured |
+
+- **W-V is supported** against the record without normalisation: V-JEPA 2 exceeds the best small JEPA by 0.27 in W-C accuracy and 0.20 in mean R² over the four thresholded quantities (criterion: both margins at least 0.05). Against the GroupNorm record the record holds the comparison with a null verdict, as amendment 6 requires.
+- **Pretraining loses amplitude information here too.** The same architecture with random weights reads every energy better than the pretrained model (kinetic energy 0.99 against 0.81), as the small JEPAs did against their random encoders.
+- **The arrow-of-time probe stays near 100 % on the mirrored control,** unlike every small JEPA. Whether this reflects irreversibility or a feature of the video rendering is not tested: the record has no random-weight control for W-C. It is not interpreted until such a control is run.
 
 ### Exploratory: why energies are not readable on the stationary flow
 

@@ -4,7 +4,7 @@
 
 Small JEPA world models on Lorenz-96 and a quasi-geostrophic atmosphere, probed for predictability, arrow of time and physical readouts against the simulators' exact answers.
 
-> **Status:** step 1 (Lorenz-96) done. Step 2 (quasi-geostrophic world) measured on a stationary flow, no hypothesis supported, with or without encoder normalisation. Step 3 (SEVIR radar, V-JEPA 2) is planned. See the [roadmap](#status-and-roadmap).
+> **Status:** step 1 (Lorenz-96) done. Step 2 (quasi-geostrophic world) measured on a stationary flow, no hypothesis supported, with or without encoder normalisation; a frozen V-JEPA 2 beats the small JEPAs (W-V supported) but reads energies worse than its random-weight control. Step 3 (SEVIR radar, V-JEPA 2) is planned. See the [roadmap](#status-and-roadmap).
 
 ## Why
 
@@ -23,7 +23,7 @@ flowchart LR
     end
     subgraph S2[Step 2: wind world]
         QG[two-layer quasi-geostrophic atmosphere] --> JS2[small JEPA, one-step and multi-step]
-        QG --> VJ2[frozen V-JEPA 2 on wind video, planned]
+        QG --> VJ2[frozen V-JEPA 2 on wind video]
     end
     subgraph S1[Step 1: proof of concept]
         L96[Lorenz-96] --> JS1[small JEPA]
@@ -37,7 +37,7 @@ flowchart LR
 ```
 
 1. **Proof of concept.** The diagnostics are run on Lorenz-96, whose Lyapunov exponent is known, to check they recover known answers.
-2. **Wind world.** A two-layer quasi-geostrophic atmosphere (a baroclinic jet with vortices) gives a 2D world with known physics. Small JEPAs are trained on it with a one-step, a multi-step or a stochastic latent loss, and their latents are read against the simulator's exact energy, jet speed and vortices. A frozen V-JEPA 2 measurement is prepared (adapter and Kaggle notebook) but not run.
+2. **Wind world.** A two-layer quasi-geostrophic atmosphere (a baroclinic jet with vortices) gives a 2D world with known physics. Small JEPAs are trained on it with a one-step, a multi-step or a stochastic latent loss, and their latents are read against the simulator's exact energy, jet speed and vortices. A frozen V-JEPA 2 is measured on the same data through a Kaggle notebook.
 3. **Real weather (planned).** V-JEPA 2 adapted to SEVIR radar videos, with the diagnostics confronted with severe storms reported in NOAA Storm Events.
 
 ### The model and how it is examined
@@ -107,7 +107,7 @@ Exploratory, not protocol results:
 |---|---|---|
 | 1 | Lorenz-96 proof of concept | done |
 | 2 | QG wind world, small JEPAs | done on a stationary flow, with GroupNorm and without normalisation (amendment 6); no hypothesis supported |
-| 2b | Frozen V-JEPA 2 on the QG world (W-V) | prepared (adapter, Kaggle notebook), not run |
+| 2b | Frozen V-JEPA 2 on the QG world (W-V) | done: W-V supported against the small JEPAs; random-weight control reads energies better; mirrored arrow-of-time result not yet controlled |
 | 3 | SEVIR radar, NOAA Storm Events, adapted V-JEPA 2 | planned |
 
 ## Run it
