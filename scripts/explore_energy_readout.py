@@ -24,9 +24,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from weather_world_model.calibration.run import _git_commit
 from weather_world_model.diagnostics.readouts import fit_readout_probes
 from weather_world_model.jepa import JEPAConfig, SequenceJEPA, encode_numpy, train_jepa
+from weather_world_model.records import provenance
 from weather_world_model.seeding import seed_everything
 from weather_world_model.worlds.qg import DIAGNOSTIC_NAMES
 from weather_world_model.worlds.run_qg import PROFILES, simulate
@@ -110,7 +110,7 @@ def main() -> None:
 
     record = {
         "exploratory": True,
-        "code_commit": _git_commit(),
+        **provenance(),
         "date": datetime.now(UTC).isoformat(timespec="seconds"),
         "profile": "full",
         "train_steps": profile.train_steps,

@@ -25,6 +25,16 @@ from weather_world_model.seeding import seed_everything
 FeatureSet = Literal["differences", "asymmetry"]
 
 
+def clips(sequences: NDArray[np.floating], clip_len: int, stride: int) -> NDArray[np.float64]:
+    """Clips ``(N * per, clip_len, d)`` cut from ``(N, T, d)`` with the given stride.
+
+    Clips are ordered start-major: all sequences at the first start, then the next start.
+    """
+    seqs = np.asarray(sequences, dtype=np.float64)
+    starts = range(0, seqs.shape[1] - clip_len + 1, stride)
+    return np.concatenate([seqs[:, s : s + clip_len] for s in starts], axis=0)
+
+
 def time_asymmetry_features(sequences: NDArray[np.floating]) -> NDArray[np.float64]:
     """Clip statistics that flip sign under time reversal; ``(N, T, d) -> (N, d(d-1)/2 + d)``."""
     seqs = np.asarray(sequences, dtype=np.float64)

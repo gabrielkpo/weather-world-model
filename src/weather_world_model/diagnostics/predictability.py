@@ -1,11 +1,14 @@
 """Diagnostic A: divergence of nearby latent trajectories."""
 
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 FloatArray = NDArray[np.float64]
+GROWTH_CEILING = 0.3  # growth window ends before the normalised separation reaches this
+ENSEMBLE_MEMBERS = 8  # members of the ensemble whose spread is reported (protocol amendment 3)
 
 
 def saturation_distance(
@@ -64,14 +67,6 @@ def growth_rate(curve: NDArray[np.floating], *, dt: float, window: tuple[int, in
     return float(slope / dt)
 
 
-def predictability_horizon(
-    normalised_curve: NDArray[np.floating], *, threshold: float = 0.5
-) -> int | None:
-    """First step where the normalised separation reaches ``threshold``, or None."""
-    hits = np.flatnonzero(np.asarray(normalised_curve) >= threshold)
-    return int(hits[0]) if hits.size else None
-
-
 def ensemble_spread_curve(
     sample_rollout_fn: Callable[[FloatArray, int], FloatArray],
     z0: NDArray[np.floating],
@@ -96,3 +91,49 @@ def ensemble_spread_curve(
             total += np.linalg.norm(members[i] - members[j], axis=-1)
     pairs = n_members * (n_members - 1) / 2
     return np.asarray(np.median(total / pairs, axis=0), dtype=np.float64)
+
+
+def growth_window(norm_curve: NDArray[np.floating]) -> tuple[int, int]:
+    """Steps 1 .. last step before the normalised separation reaches ``GROWTH_CEILING``.
+
+    Raises ``ValueError`` when fewer than two steps stay below the ceiling: the separation
+    saturates too early for a slope to be fitted, and a smaller perturbation is needed.
+    """
+    above = np.flatnonzero(norm_curve >= GROWTH_CEILING)
+    end = int(above[0]) - 1 if above.size else len(norm_curve) - 1
+    if end < 2:
+        raise ValueError("separation saturates before step 3; use a smaller epsilon")
+    return 1, end
+
+
+def growth_fit(
+    curve: NDArray[np.floating],
+    saturation: float,
+    *,
+    dt: float,
+    safe: bool = False,
+    stored_curve: Callable[[FloatArray], list[float]] | None = None,
+) -> dict[str, Any]:
+    """Growth rate of ``curve`` over :func:`growth_window`, as a record entry.
+
+    Returns ``growth_rate``, ``window`` and the normalised curve: under
+    ``"normalised_curve"`` (every step) by default, or under
+    ``"normalised_curve_subsampled"`` as returned by ``stored_curve``. With ``safe``, a
+    curve with no fittable window (or not positive over it) gives a null rate and window
+    and an ``"error"`` message instead of raising ``ValueError``.
+    """
+    norm = normalised(curve, saturation)
+    if stored_curve is None:
+        stored: dict[str, Any] = {"normalised_curve": [float(v) for v in norm]}
+    else:
+        stored = {"normalised_curve_subsampled": stored_curve(norm)}
+    try:
+        window = growth_window(norm)
+        rate = growth_rate(curve, dt=dt, window=window)
+        fit: dict[str, Any] = {"growth_rate": rate, "window": list(window)}
+    except ValueError as err:
+        if not safe:
+            raise
+        fit = {"growth_rate": None, "window": None, "error": str(err)}
+    # Key order of the existing records: a subsampled curve first, a full curve last.
+    return {**stored, **fit} if stored_curve is not None else {**fit, **stored}

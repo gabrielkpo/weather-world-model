@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from weather_world_model.diagnostics.modes import fit_dmd, growth_modes, project_on_mode
+from weather_world_model.diagnostics.modes import fit_dmd, project_on_mode
 
 
 def _rot(theta: float) -> np.ndarray:
@@ -29,7 +29,6 @@ def test_recovers_eigenvalues() -> None:
     assert np.all(np.diff(np.abs(got)) <= 1e-12)
     for lam in expected:
         assert np.min(np.abs(got - lam)) < 1e-6
-    np.testing.assert_array_equal(np.sort(growth_modes(res)), [0, 1])
 
 
 def test_rank_projection_and_mode_amplitude() -> None:
