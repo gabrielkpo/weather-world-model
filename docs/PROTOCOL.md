@@ -167,3 +167,15 @@ Changes:
 - **Lorenz-96.** No equivalent control was run on Lorenz-96, whose waves also have a preferred direction of propagation; its H0-C result is reported with that caveat.
 - **Irreversibility.** A diagnostic aimed at true irreversibility (one that stays above chance under the mirrored control on true fields) will be defined in a later amendment before it is applied to any model.
 - **Open point.** With the protocol's sizes (56 training runs, 100 snapshots, 8 components, clips of 16) the exploratory analysis gives 87 % on true fields, against 76.5 % in the first step-2 run. The difference is not explained yet; the two computations differ at least in the standardisation of the fields and in the probe's training clips, and this is to be traced before diagnostic C is used again.
+
+### 5. 2026-11-27, the step-2 data were recorded before the flow was stationary
+
+**Finding.** With the simulator defaults, the kinetic energy of the QG world keeps rising for about 40 time units after a cold start (about 0.05 at t = 15, 0.45 at t = 20, 0.75 at t = 25) and only then fluctuates around its equilibrium (about 0.9, between 0.7 and 1.2). The step-2 runs used a spin-up of 4 000 steps (20 time units) and recorded snapshots from t = 20 to t = 30, so every training and test sequence was taken while the flow was still spinning up. The statement in amendment 2 that snapshots are taken "after spin-up" was not met in the sense intended. This was noticed on 2026-11-27 while exporting a demonstration sequence in which kinetic energy rose from 0.18 to 0.83.
+
+**Consequences.** All step-2 results obtained so far (W-A, W-C, W-P, W-R, W-S, and the exploratory analysis of amendment 4, whose data used the same spin-up) are superseded. They stay in the results, marked as measured on a spinning-up flow. In particular, with energy rising in every sequence, readouts of energy and the comparison with persistence can reflect the elapsed time since the cold start rather than learned dynamics. Step 1 is not affected: Lorenz-96 runs use a burn-in of 50 time units.
+
+**Changes.**
+
+- Spin-up of 12 000 steps (60 time units) for every QG dataset, including the twin-divergence ground truth and the exploratory analysis.
+- A stationarity check stored in every QG run record and required to pass before any hypothesis is evaluated: over the training runs, the mean kinetic energy of the last third of the recorded snapshots differs from that of the first third by less than 10 %. A long-run energy record of the simulator (two seeds, 300 time units) is versioned with the rerun.
+- Step 2 is rerun in full on the new data, with the hypotheses and criteria of amendments 2 and 3 unchanged, and with the mirrored control of amendment 4 on W-C.
