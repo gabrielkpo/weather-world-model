@@ -64,3 +64,13 @@ and the verdict (`W-V.supported`) is `null`.
   it needs a V-JEPA 2 training loop and is left to a later change.
 - Diagnostic A (W-A) and rollout readouts (W-R) are not part of W-V; the frozen encoder is used
   without its predictor.
+
+## Exploratory: arrow-of-time symmetry controls
+
+[`notebooks/arrow_symmetry_kaggle.ipynb`](../notebooks/arrow_symmetry_kaggle.ipynb) runs
+`scripts/explore_arrow_symmetry_vjepa2.py` the same way (mode `git`, full commit SHA, GPU and
+internet on). It checks whether the mirrored-control W-C result of the frozen V-JEPA 2 comes from
+the encoder seeing mirrored images: it adds a mirror-only probe and probes in which every clip of
+both classes gets an independent random rotation or reflection (wind vector included), for the
+pretrained model and its random-weight control. Download `arrow-symmetry-vjepa2.json` and commit it
+under `results/exploratory/`. Not a protocol result.

@@ -17,7 +17,8 @@ Each record's `code_commit` is the last commit of the pull-request branch on whi
 | `results/qg/qg-stationary.json` | #25, report step 2 on a stationary QG flow (amendment 5) |
 | `results/exploratory/energy-readout-qg.json` | #26, show that GroupNorm erases the field amplitude the energy probes need |
 | `results/qg/qg-stationary-nonorm.json` | #34, step-2 rerun with an encoder without normalisation (amendment 6); produced on branch commit `bfa52fa` |
-| `results/qg/qg-vjepa2.json` | this pull request, frozen V-JEPA 2 on the QG world (W-V, amendment 2); produced on `main` commit `e760675` on a Kaggle T4 |
+| `results/qg/qg-vjepa2.json` | #35, frozen V-JEPA 2 on the QG world (W-V, amendment 2); produced on `main` commit `e760675` on a Kaggle T4 |
+| `results/exploratory/arrow-symmetry-vjepa2.json` | this pull request, arrow-of-time symmetry controls for frozen V-JEPA 2; produced on branch commit `1ec0f61` on a Kaggle T4 |
 
 Records carry no data hash and no bootstrap intervals; uncertainty is the minimum to maximum over seeds (protocol amendment 7).
 
@@ -291,7 +292,23 @@ Run record: [`results/qg/qg-vjepa2.json`](../results/qg/qg-vjepa2.json) (code co
 
 - **W-V is supported** against the record without normalisation: V-JEPA 2 exceeds the best small JEPA by 0.27 in W-C accuracy and 0.20 in mean R² over the four thresholded quantities (criterion: both margins at least 0.05). Against the GroupNorm record the record holds the comparison with a null verdict, as amendment 6 requires.
 - **Pretraining loses amplitude information here too.** The same architecture with random weights reads every energy better than the pretrained model (kinetic energy 0.99 against 0.81), as the small JEPAs did against their random encoders.
-- **The arrow-of-time probe stays near 100 % on the mirrored control,** unlike every small JEPA. Whether this reflects irreversibility or a feature of the video rendering is not tested: the record has no random-weight control for W-C. It is not interpreted until such a control is run.
+- **The arrow-of-time probe stays near 100 % on the mirrored control,** unlike every small JEPA. The symmetry controls below show that this comes from the encoder seeing mirrored images, not from the time direction.
+
+### Exploratory: arrow-of-time symmetry controls for V-JEPA 2
+
+Not a protocol result. Record: [`results/exploratory/arrow-symmetry-vjepa2.json`](../results/exploratory/arrow-symmetry-vjepa2.json) (code commit `1ec0f61`, same data as the W-V record, Kaggle Tesla T4, 1 h 28 min). Clip-level logistic probe, test accuracy for three probe seeds; chance is 50 %. Reproduce with `notebooks/arrow_symmetry_kaggle.ipynb` (docs/KAGGLE.md).
+
+| Probe | Classes | V-JEPA 2, pretrained | V-JEPA 2, random weights |
+|---|---|---|---|
+| Plain | forward / reversed | 100 % | 44 to 49 % |
+| Mirrored control (W-C) | forward / reversed and mirrored | 98 to 100 % | 92 to 96 % |
+| Mirror only | forward / mirrored, time unchanged | 100 % | 94 to 95 % |
+| Random symmetries | forward / reversed, each clip of both classes rotated or reflected at random | 80 to 88 % | 42 to 52 % |
+| Random symmetries, frozen clips | first / last snapshot repeated, same transformations | 42 to 46 % | 45 to 55 % |
+
+- **The mirrored-control result is an artefact.** Both encoders tell a mirrored clip from a plain one with time unchanged (94 to 100 %), and the random-weight encoder, which reads no time direction at all (44 to 49 % on plain reversal), still scores 92 to 96 % on the mirrored control.
+- **A time-direction signal remains once spatial cues are removed.** With every clip of both classes turned by an independent random rotation or reflection (wind vector included), the pretrained encoder reads the time direction at 80 to 88 %, the random-weight encoder is at chance, and frozen clips are at chance, so the signal is in the motion and comes from pretraining.
+- **It is not shown to be irreversibility.** Random symmetries remove the absolute orientation but keep how the flow moves relative to its own structure (for example waves travelling against the jet). A reversible flow rendered the same way would be the control that separates the two; it is not run.
 
 ### Exploratory: why energies are not readable on the stationary flow
 
