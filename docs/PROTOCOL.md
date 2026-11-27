@@ -189,3 +189,18 @@ Changes:
 - Step 2 is rerun with the convolutional encoder without normalisation (`conv_norm="none"`) for every model (one-step, 8-step, stochastic) and for the random-weight control, with the data, hypotheses and criteria of amendments 2, 3 and 5 unchanged and the mirrored control of amendment 4.
 - The rerun of amendment 5 (encoder with GroupNorm) is kept and reported next to it, so that both architectures are compared on the same stationary data.
 - V-JEPA 2 (hypothesis W-V) is compared with the small JEPA without normalisation.
+
+### 7. 2026-11-27, reporting promises that the records did not keep
+
+**Finding.** A review of the run records against this protocol found three promises that were not kept.
+
+- **Uncertainty and data fingerprint (section 6).** Section 6 promised 95 % bootstrap intervals and a data fingerprint in every run record. The records report per-seed values and the minimum to maximum over three seeds, and none carries a hash of its data.
+- **Multi-step model on Lorenz-96 (amendment 2).** Amendment 2 announced that the multi-step model would be rerun on Lorenz-96. This was not done as a recorded run: only an exploratory script (`scripts/compare_rollout_loss.py`, one seed, printed output, no record) was run; its numbers are reported as exploratory in the results.
+- **`DATA.md` (section 3.2).** The file does not exist.
+
+**Changes.**
+
+- From now on, every run record carries a hash of the training array and the dirty state of the code (whether the working tree had uncommitted changes when the run started).
+- Uncertainty is reported as per-seed values and the minimum to maximum over seeds, and verdicts use the worst seed. Bootstrap intervals are dropped: three seeds are what the compute budget allows, and an interval over three values would suggest a precision the runs do not have.
+- Data sources and their licences are listed in the Data section of the README. A `DATA.md` will be added with step 3, when real data enter the project.
+- Records written before this amendment are kept as they are.

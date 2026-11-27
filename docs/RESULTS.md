@@ -2,6 +2,23 @@
 
 Every number below is read from a versioned run record. Hypotheses are those of [PROTOCOL.md](PROTOCOL.md), including its amendments.
 
+## Records and commits
+
+Each record's `code_commit` is the last commit of the pull-request branch on which it was produced. Pull requests are squash-merged, so these commits are not ancestors of `main`; the same code is on `main` in the squash commit of the pull request that added the record:
+
+| Record | Added by |
+|---|---|
+| `results/calibration/calibration-full.json` | #7, calibrate the three diagnostics on simulated systems |
+| `results/qg/qg-full.json` | #13, measure predictability, arrow of time and physical readouts on the QG world |
+| `results/calibration/calibration-stochastic.json` | #14, add stochastic predictor and rollout readouts (amendment 3) |
+| `results/exploratory/arrow-probe-qg.json` | #16, show that the arrow-of-time probe reads propagation direction (amendment 4) |
+| `results/qg/qg-amendment3.json` | #21, report W-R and W-S on the QG world (amendment 3) |
+| `results/qg/qg-energy-long.json` | #24, record QG data on a stationary flow (amendment 5) |
+| `results/qg/qg-stationary.json` | #25, report step 2 on a stationary QG flow (amendment 5) |
+| `results/exploratory/energy-readout-qg.json` | #26, show that GroupNorm erases the field amplitude the energy probes need |
+
+Records carry no data hash and no bootstrap intervals; uncertainty is the minimum to maximum over seeds (protocol amendment 7). The step-2 rerun with an encoder without normalisation (amendment 6) is pending; its record is not in the repository yet.
+
 ## Step 1: Lorenz-96 proof of concept
 
 Run record: [`results/calibration/calibration-full.json`](../results/calibration/calibration-full.json) (code commit `b183320`, profile `full`, seeds 0, 1, 2, CPU). Reproduce with:
@@ -25,6 +42,7 @@ The calibration model is the small frame-level JEPA (MLP encoder, residual MLP p
 - **The modes criterion passes, but the growth is lost.** Moduli are within 7.4 % of the truth, yet the growing pair (modulus 1.02) is estimated at 0.96 to 0.97: below one, so the latent dynamics damp a mode that grows. A criterion on modulus error alone hides this, so the run record now also states, for each mode, whether growth stays growth and decay stays decay (`growth_preserved`): the growing pair is lost in all three seeds, the decaying and near-unit pairs are kept.
 - *Caveat added on 2026-11-26 (protocol amendment 4):* on the QG world the same probe turned out to read the direction of wave propagation rather than irreversibility. Lorenz-96 waves also have a preferred direction and no mirrored control was run here, so the result below may reflect propagation only.
 - **The arrow of time is readable in the latent space,** with clip statistics that change sign under time reversal. The same probe on raw latent differences stays at chance (46 to 49 % on Lorenz-96), as expected for a stationary process.
+- *Caveats on the evaluation (added on 2026-11-27).* For H0-C, the encoder is trained on all clips and the probe is split 70 / 30 by clip index, not by run, so clips from one trajectory can fall on both sides of the split. For H0-B, the R² and the DMD eigenvalues are computed on the data the linear map was fitted on (in-sample). The verdicts stand as measured, with these caveats.
 
 ### Consequence for the protocol
 
@@ -35,6 +53,8 @@ H0-A is not supported, so, as written in the protocol, diagnostic A is not appli
 3. drop diagnostic A.
 
 Decision (2026-11-26, protocol amendment 2): option 2 is taken. Every later model is trained with both a one-step and a multi-step latent rollout loss, the multi-step model is rerun on Lorenz-96, and diagnostic B is withdrawn.
+
+*Exploratory, not a recorded run (protocol amendment 7).* The multi-step rerun on Lorenz-96 was only done with `scripts/compare_rollout_loss.py`, on one seed (seed 0, sizes of the `full` profile), whose output is printed and not recorded: latent growth rate at ε = 1e-3 of 0.106 with k = 1 and 0.093 with k = 8, against a leading Lyapunov exponent of 1.694. On this seed the multi-step loss does not restore chaotic error growth.
 
 ### Stochastic predictor (hypothesis L-S, protocol amendment 3)
 
@@ -131,7 +151,6 @@ The record's code commit is the last commit of the branch before it was squash-m
 - **W-R says nothing about the dynamics here, because the probes read nothing to begin with.** Rollout and persistence both have R² around zero at h = 10; the one-step and the stochastic model are below persistence, the 8-step model is level with it. A comparison of forecasts needs a readout that works on real frames first.
 - **The learned predictors still do not reproduce chaotic error growth.** The simulator's twin errors grow at 0.96 per time unit on the stationary flow (30 % of saturation after about 7.6 time units). The one-step model's latent separation grows at 0.08 to 0.32, the 8-step model's does not grow, and the stochastic model's, with the noise held fixed, grows at 0.02 to 0.04. This is the one finding of the earlier runs that holds unchanged, and it now holds on Lorenz-96 and on both QG datasets. The stochastic model's ensembles spread through the injected noise and end 1.4 to 2.6 times further apart than two unrelated real states.
 - **The latents keep the direction of wave propagation, and the probe detects nothing else.** On true fields the probe reaches 88.6 % against plain reversal and 49.2 % under the mirrored control. The 8-step model follows (78.8 to 89.4 %, then 47.7 to 60.6 %), the one-step model less reliably (68.9 to 86.4 %), the stochastic model barely (50.0 to 75.8 %). W-C fails as written because the worst seed of each model is under 80 %; under the mirrored control every model is near chance, so nothing here shows that irreversibility is represented. This confirms, on stationary data and at the protocol's sizes, what the exploratory analysis of amendment 4 found.
-- **To be checked before any further claim:** whether the encoder's normalisation layers discard the amplitude of the field, whether the smaller spread of the energies on a stationary flow is what makes them unreadable, and whether a readout that is not linear changes the picture.
 
 ### Superseded results (spinning-up flow)
 
@@ -139,7 +158,7 @@ The record's code commit is the last commit of the branch before it was squash-m
 
 The commands in this subsection are those used at the time. The runner now uses the longer spin-up and writes records under other names, so they no longer reproduce these records; each record's code commit does.
 
-Run record: [`results/qg/qg-full.json`](../results/qg/qg-full.json) (code commit `e18950d`, profile `full`, seeds 0, 1, 2, CPU, 1 h 49 min wall time). Reproduce with:
+Run record: [`results/qg/qg-full.json`](../results/qg/qg-full.json) (code commit `e18950d`, profile `full`, seeds 0, 1, 2, CPU, 1 h 49 min wall time). Its `date` field, `2026-11-26T18:00:00+00:00`, is a round value that looks set by hand rather than written by the runner (the record was committed and its pull request #13 merged at 18:09 UTC the same day). Reproduce with:
 
 ```bash
 uv run python -m weather_world_model.worlds.run_qg --profile full --out results/qg
