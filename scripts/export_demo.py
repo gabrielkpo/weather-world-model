@@ -16,7 +16,7 @@ import argparse
 import base64
 import json
 import math
-from dataclasses import asdict, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,7 +42,7 @@ from weather_world_model.worlds.run_qg import (
     PROFILES,
     TORCH_THREADS,
     QGData,
-    _plain,
+    checkpoint_matches,
     log,
     simulate,
     train_or_load,
@@ -141,7 +141,7 @@ def maps(winds: dict[str, FloatArray], background: float) -> dict[str, Any]:
 
 # --------------------------------------------------------------------- models
 def load_models(
-    data: QGData, checkpoints: Path, seed: int
+    data: QGData, checkpoints: Path, seed: int, conv_norm: str = "group"
 ) -> dict[str, tuple[SequenceJEPA, ReadoutProbes, float]]:
     """Each model of the seed with its W-P probes and latent saturation distance, as in the run."""
     profile = PROFILES["full"]
@@ -151,6 +151,7 @@ def load_models(
         batch_size=profile.batch_size,
         conv_channels=profile.conv_channels,
         log_every=max(1, profile.train_steps // 50),
+        conv_norm=conv_norm,  # type: ignore[arg-type]
     )
     flat_diags = {k: v.reshape(-1, v.shape[-1]) for k, v in data.diags.items()}
     out: dict[str, tuple[SequenceJEPA, ReadoutProbes, float]] = {}
@@ -161,8 +162,7 @@ def load_models(
         cfg = replace(base, rollout_steps=k, noise_dim=noise_dim)
         # Check before train_or_load, which would retrain and overwrite a mismatched file.
         saved = torch.load(path, weights_only=True)
-        expected = {"config": asdict(cfg), "profile": asdict(profile), "seed": seed}
-        if any(saved.get(key) != _plain(value) for key, value in expected.items()):
+        if not checkpoint_matches(saved, cfg, profile, seed):
             raise RuntimeError(f"{path} does not match the run's configuration")
         del saved
         model, _ = train_or_load(cfg, data, profile, seed, name, path)
@@ -189,7 +189,9 @@ def rollout(
     return np.asarray(out.numpy(), dtype=np.float64)
 
 
-def build(checkpoints: Path, seed: int, start_index: int, n_frames: int) -> dict[str, Any]:
+def build(
+    checkpoints: Path, seed: int, start_index: int, n_frames: int, conv_norm: str = "group"
+) -> dict[str, Any]:
     """Simulate, load the models and assemble the demo record."""
     torch.set_num_threads(TORCH_THREADS)
     profile = PROFILES["full"]
@@ -202,7 +204,7 @@ def build(checkpoints: Path, seed: int, start_index: int, n_frames: int) -> dict
     frames = {k: ((w - data.mean) / data.std).astype(np.float32) for k, w in truth["winds"].items()}
     diag = {name: truth["diags"][:, DIAGNOSTIC_NAMES.index(name)] for name in DIAGNOSTIC_NAMES}
     velocity_sat = float(np.median([velocity_saturation(m) for m in data.starts]))
-    models = load_models(data, checkpoints, seed)
+    models = load_models(data, checkpoints, seed, conv_norm)
     steps = n_frames - 1
     generator = torch.Generator().manual_seed(seed)
 
@@ -251,6 +253,7 @@ def build(checkpoints: Path, seed: int, start_index: int, n_frames: int) -> dict
             "code_commit": _git_commit(),
             "date": datetime.now(UTC).isoformat(timespec="seconds"),
             "seed": seed,
+            "conv_norm": conv_norm,
             "models": [name for name, _, _ in AMENDMENT3_MODELS],
             "test_start_index": start_index,
             "epsilon": EPSILON,
@@ -306,13 +309,21 @@ def ranges(record: dict[str, Any]) -> dict[str, list[float]]:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--checkpoints", type=Path, default=Path("checkpoints/qg-stationary"))
+    parser.add_argument(
+        "--checkpoints",
+        type=Path,
+        default=None,
+        help="default: checkpoints/qg-stationary, or checkpoints/qg-stationary-nonorm",
+    )
+    parser.add_argument("--conv-norm", choices=("group", "none"), default="group")
     parser.add_argument("--out", type=Path, default=Path("runs/demo/demo.json"))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--start", type=int, default=0, help="index of the test start state")
     parser.add_argument("--frames", type=int, default=N_FRAMES)
     args = parser.parse_args(argv)
-    record = build(args.checkpoints, args.seed, args.start, args.frames)
+    suffix = "-nonorm" if args.conv_norm == "none" else ""
+    checkpoints = args.checkpoints or Path(f"checkpoints/qg-stationary{suffix}")
+    record = build(checkpoints, args.seed, args.start, args.frames, args.conv_norm)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(record, separators=(",", ":")) + "\n")
     print(f"saved {args.out.resolve()} ({args.out.stat().st_size / 1e6:.2f} MB)")

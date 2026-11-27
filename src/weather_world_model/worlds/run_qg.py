@@ -23,6 +23,11 @@ configuration and seeds, a stochastic one-step model (noise dimension 8, energy 
 added, and every model also gets rollout readouts (W-R); the stochastic model's sensitivity
 to initial conditions under a shared noise sequence decides W-S. Trained weights are saved
 under ``--checkpoints`` (ignored by Git) and reused by a restarted run.
+
+Protocol amendment 6: ``--conv-norm none`` builds every model and the random-weight control
+with the convolutional encoder without normalisation; the record and the checkpoint
+directory then carry the suffix ``-nonorm``. The default (``group``) is the encoder of the
+earlier runs.
 """
 
 from __future__ import annotations
@@ -33,10 +38,10 @@ import json
 import resource
 import sys
 import time
-from dataclasses import asdict, dataclass, replace
+from dataclasses import MISSING, asdict, dataclass, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -68,6 +73,7 @@ from weather_world_model.worlds.qg import (
 )
 
 FloatArray = NDArray[np.float64]
+ConvNorm = Literal["group", "none"]
 EPSILONS = (1e-3, 1e-2)
 THRESHOLDED = ("kinetic_energy", "available_potential_energy", "enstrophy", "jet_speed_max")
 CURVE_POINTS = 40  # curves are stored subsampled to keep the record small
@@ -463,6 +469,23 @@ def _plain(value: Any) -> Any:
     return json.loads(json.dumps(value))
 
 
+def checkpoint_matches(saved: dict[str, Any], cfg: JEPAConfig, profile: Profile, seed: int) -> bool:
+    """True if a checkpoint was written for this model configuration, profile and seed.
+
+    A configuration saved before a field existed is read with that field's default, so that
+    older checkpoints stay usable when the default keeps the earlier behaviour.
+    """
+    saved_cfg = dict(saved.get("config") or {})
+    for f in fields(JEPAConfig):
+        if f.name not in saved_cfg and f.default is not MISSING:
+            saved_cfg[f.name] = _plain(f.default)
+    return (
+        saved_cfg == _plain(asdict(cfg))
+        and saved.get("profile") == _plain(asdict(profile))
+        and saved.get("seed") == seed
+    )
+
+
 def train_or_load(
     cfg: JEPAConfig, data: QGData, profile: Profile, seed: int, name: str, checkpoint: Path | None
 ) -> tuple[SequenceJEPA, dict[str, Any]]:
@@ -471,7 +494,7 @@ def train_or_load(
     meta = {"config": _plain(asdict(cfg)), "profile": _plain(asdict(profile)), "seed": seed}
     if checkpoint is not None and checkpoint.exists():
         saved = torch.load(checkpoint, weights_only=True)
-        if all(saved.get(k) == v for k, v in meta.items()):
+        if checkpoint_matches(saved, cfg, profile, seed):
             model = SequenceJEPA(cfg)
             model.load_state_dict(saved["state_dict"])
             log(f"seed {seed} {name} loaded from {checkpoint}")
@@ -515,8 +538,12 @@ def run_seed(
     *,
     amendment3: bool = False,
     checkpoints: Path | None = None,
+    conv_norm: ConvNorm = "group",
 ) -> dict[str, Any]:
     """Train k = 1 and k = 8 models, build the random-weight control, evaluate all three.
+
+    ``conv_norm`` is the normalisation of the convolutional encoder, for every trained model
+    and for the random-weight control (protocol amendment 6).
 
     With ``amendment3`` a stochastic one-step model is trained as well and every trained
     model also gets rollout readouts.
@@ -528,6 +555,7 @@ def run_seed(
         batch_size=profile.batch_size,
         conv_channels=profile.conv_channels,
         log_every=max(1, profile.train_steps // 50),
+        conv_norm=conv_norm,
     )
     for name, k, noise_dim in AMENDMENT3_MODELS if amendment3 else BASE_MODELS:
         cfg = replace(base, rollout_steps=k, noise_dim=noise_dim)
@@ -698,6 +726,7 @@ def run(
     *,
     amendment3: bool = False,
     checkpoints: Path | None = None,
+    conv_norm: ConvNorm = "group",
 ) -> dict[str, Any]:
     """Simulate the data once, then train and evaluate every seed, and apply the criteria.
 
@@ -713,7 +742,8 @@ def run(
     done: dict[str, Any] = {}
     if partial is not None and partial.exists():
         previous = json.loads(partial.read_text())
-        if previous.get("config") == json.loads(json.dumps(asdict(profile))):
+        same_encoder = previous.get("conv_norm", "group") == conv_norm
+        if same_encoder and previous.get("config") == json.loads(json.dumps(asdict(profile))):
             done = previous
             log(f"resuming from {partial}: seeds {[s['seed'] for s in done['seeds']]} done")
     data = simulate(profile)
@@ -770,6 +800,7 @@ def run(
             "date": datetime.now(UTC).isoformat(timespec="seconds"),
             "profile": profile_name,
             "config": asdict(profile),
+            "conv_norm": conv_norm,
             "qg_config": asdict(QGConfig()),
             "split_runs": dict(
                 zip(("train", "val", "test"), split_sizes(profile.n_runs), strict=True)
@@ -814,7 +845,16 @@ def run(
     for s in profile.seeds:
         if any(prev["seed"] == s for prev in seeds):
             continue
-        seeds.append(run_seed(data, profile, s, amendment3=amendment3, checkpoints=checkpoints))
+        seeds.append(
+            run_seed(
+                data,
+                profile,
+                s,
+                amendment3=amendment3,
+                checkpoints=checkpoints,
+                conv_norm=conv_norm,
+            )
+        )
         seeds.sort(key=lambda r: r["seed"])
         if partial is not None:
             partial.write_text(json.dumps(record(final=False), indent=2) + "\n")
@@ -835,14 +875,28 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="directory for trained weights (saved, and reused on restart); keep it out of Git",
     )
+    parser.add_argument(
+        "--conv-norm",
+        choices=("group", "none"),
+        default="group",
+        help="normalisation of the convolutional encoder, for every model and the random control",
+    )
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     stem = "qg-stationary" if args.amendment3 else "qg-stationary-base"
+    if args.conv_norm == "none":
+        stem = f"{stem}-nonorm"
     if args.profile != "full":
         stem = f"{stem}-{args.profile}"
     partial = args.out / f"{stem}.partial.json"
     checkpoints = args.checkpoints / stem if args.checkpoints is not None else None
-    record = run(args.profile, partial=partial, amendment3=args.amendment3, checkpoints=checkpoints)
+    record = run(
+        args.profile,
+        partial=partial,
+        amendment3=args.amendment3,
+        checkpoints=checkpoints,
+        conv_norm=args.conv_norm,
+    )
     path = args.out / f"{stem}.json"
     path.write_text(json.dumps(record, indent=2) + "\n")
     partial.unlink(missing_ok=True)
