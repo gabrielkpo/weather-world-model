@@ -112,6 +112,8 @@ SWEEP: dict[str, Variant] = {
     "det_k1_reg10_pred_dim64": Variant(
         var_weight=10.0, cov_weight=0.4, reg_on_predictions=True, latent_dim=64
     ),
+    "det_k1_reg10_dim64": Variant(var_weight=10.0, cov_weight=0.4, latent_dim=64),
+    "det_k1_reg100_dim64": Variant(var_weight=100.0, cov_weight=4.0, latent_dim=64),
     "det_k1_reg10_pred_long": Variant(
         var_weight=10.0, cov_weight=0.4, reg_on_predictions=True, steps_factor=4
     ),
@@ -205,6 +207,70 @@ def ridge_r2(x_tr: FloatArray, y_tr: FloatArray, x_te: FloatArray, y_te: FloatAr
     return float(1 - ((pred - y_te) ** 2).sum() / ((y_te - y_te.mean()) ** 2).sum())
 
 
+CONTROL_HORIZONS = (1, 2, 5, 10)
+
+
+def ridge_fit(x: FloatArray, y: FloatArray, alpha: float = 1e-3) -> FloatArray:
+    """Ridge weights with a bias row, inputs as given; ``x @ w[:-1] + w[-1]`` predicts ``y``."""
+    a1 = np.hstack([x, np.ones((len(x), 1))])
+    return np.asarray(np.linalg.solve(a1.T @ a1 + alpha * np.eye(a1.shape[1]), a1.T @ y))
+
+
+def controls(
+    model: VariantJEPA,
+    encode: Any,
+    train: FloatArray,
+    mean: float,
+    std: float,
+    seed: int,
+) -> dict[str, Any]:
+    """Checks that a growth rate comes from the dynamics of the true state (deterministic only).
+
+    - ``state_r2``: a ridge probe from latent to the standardised Lorenz-96 state, fitted on
+      training frames, tested on new trajectories (how much of the state the latent keeps);
+    - ``forecast_skill``: the latent is rolled out ``h`` steps and read through that probe;
+      skill = 1 - MSE / MSE of persistence (copying the initial state), per horizon ``h``,
+      with the skill of the true latent at ``h`` read through the same probe as a ceiling;
+    - ``probed_growth_rate``: diagnostic A on the probed states (twin rollouts read through the
+      probe), i.e. whether the separation grows in directions of the true state.
+    """
+    rng = np.random.default_rng([seed, 7])
+    frames_tr = train[:, ::5].reshape(-1, train.shape[2])
+    z_tr = encode(frames_tr)
+    w = ridge_fit(z_tr, (frames_tr - mean) / std)
+
+    def probe(z: FloatArray) -> FloatArray:
+        return np.asarray(z @ w[:-1] + w[-1], dtype=np.float64)
+
+    test = simulate_lorenz96_batch(64, max(CONTROL_HORIZONS) + 1, rng=rng)
+    x_std = (test - mean) / std
+    z0 = encode(test[:, 0])
+    traj = latent_rollout(model)(z0, max(CONTROL_HORIZONS))
+    flat_true = x_std.reshape(-1, x_std.shape[-1])
+    flat_pred = probe(encode(test.reshape(-1, test.shape[-1])))
+    state_r2 = float(
+        1 - ((flat_pred - flat_true) ** 2).sum() / ((flat_true - flat_true.mean(0)) ** 2).sum()
+    )
+    skill = {}
+    for h in CONTROL_HORIZONS:
+        mse = float(((probe(traj[:, h]) - x_std[:, h]) ** 2).mean())
+        persist = float(((x_std[:, 0] - x_std[:, h]) ** 2).mean())
+        skill[f"h{h}"] = 1.0 - mse / persist
+        # ceiling: the true latent at h read through the same probe (probe error only)
+        ceiling = float(((probe(encode(test[:, h])) - x_std[:, h]) ** 2).mean())
+        skill[f"h{h}_ceiling"] = 1.0 - ceiling / persist
+    frames = simulate_lorenz96_batch(128, 1, rng=rng)[:, 0]
+    roll = latent_rollout(model)
+
+    def probed_rollout(z: FloatArray, k: int) -> FloatArray:
+        return probe(roll(z, k))
+
+    curve = separation_curve(encode, probed_rollout, frames, epsilon=1e-3, k=120, rng=rng)
+    sat = saturation_distance(probe(encode(frames)), rng)
+    probed = growth_fit(curve, sat, dt=SAMPLE_DT, safe=True)["growth_rate"]
+    return {"state_r2": state_r2, "forecast_skill": skill, "probed_growth_rate": probed}
+
+
 def measure(
     name: str, variant: Variant, profile_name: str, seed: int, reference: float
 ) -> dict[str, Any]:
@@ -267,6 +333,8 @@ def measure(
         y_train = np.repeat(forcing_of, train[:, ::10].shape[1]).astype(np.float64)
         z_test = encode(test.reshape(-1, test.shape[2]))
         out["forcing_readout_r2"] = ridge_r2(z_train, y_train, z_test, y_test)
+    if not variant.stochastic:
+        out["controls"] = controls(model, encode, train, mean, std, seed)
     out["relative_error"] = (
         None if out["growth_rate"] is None else abs(out["growth_rate"] - reference) / reference
     )
@@ -281,9 +349,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--profile", choices=("full", "smoke"), default="full")
     parser.add_argument("--variants", nargs="*", default=list(VARIANTS))
     parser.add_argument("--sweep", action="store_true", help="run the SWEEP variants")
+    parser.add_argument(
+        "--all-deterministic", action="store_true", help="every deterministic variant"
+    )
     args = parser.parse_args(argv)
     if args.sweep:
         args.variants = list(SWEEP)
+    if args.all_deterministic:
+        args.variants = [n for n, v in ALL_VARIANTS.items() if not v.stochastic]
     profile = PROFILES[args.profile]
     t0 = time.perf_counter()
     references = {}
@@ -305,6 +378,7 @@ def main(argv: list[str] | None = None) -> None:
             "spread_growth_rate": [r.get("spread_growth_rate") for r in rs],
             "collapsed": [r["collapsed"] for r in rs],
             "forcing_readout_r2": [r.get("forcing_readout_r2") for r in rs],
+            "controls": [r.get("controls") for r in rs],
         }
         for name, rs in runs.items()
     }
@@ -322,7 +396,7 @@ def main(argv: list[str] | None = None) -> None:
         "wall_seconds": time.perf_counter() - t0,
     }
     args.out.mkdir(parents=True, exist_ok=True)
-    suffix = ("-sweep" if args.sweep else "") + (
+    suffix = ("-sweep" if args.sweep else "-controls" if args.all_deterministic else "") + (
         "" if args.profile == "full" else f"-{args.profile}"
     )
     path = args.out / f"contraction-lorenz{suffix}.json"
