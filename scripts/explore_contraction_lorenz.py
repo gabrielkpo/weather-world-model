@@ -78,6 +78,8 @@ class Variant:
     cov_weight: float = 0.04
     reg_on_predictions: bool = False
     varied_forcing: bool = False
+    latent_dim: int = 32
+    steps_factor: int = 1  # training steps = profile.train_steps * steps_factor
 
 
 VARIANTS: dict[str, Variant] = {
@@ -92,6 +94,29 @@ VARIANTS: dict[str, Variant] = {
     "stoch_state_k8": Variant(stochastic=True, noise="state", k=8),
     "det_k1_forcing": Variant(varied_forcing=True),
 }
+
+
+# Sweep of the regularisation strength and combinations with the other levers.
+SWEEP: dict[str, Variant] = {
+    **{
+        f"det_k1_reg{w:g}{'_pred' if pred else ''}": Variant(
+            var_weight=w, cov_weight=0.04 * w, reg_on_predictions=pred
+        )
+        for w in (3.0, 10.0, 30.0, 100.0)
+        for pred in (False, True)
+    },
+    "det_k8_reg10_pred": Variant(k=8, var_weight=10.0, cov_weight=0.4, reg_on_predictions=True),
+    "det_k1_reg10_pred_forcing": Variant(
+        var_weight=10.0, cov_weight=0.4, reg_on_predictions=True, varied_forcing=True
+    ),
+    "det_k1_reg10_pred_dim64": Variant(
+        var_weight=10.0, cov_weight=0.4, reg_on_predictions=True, latent_dim=64
+    ),
+    "det_k1_reg10_pred_long": Variant(
+        var_weight=10.0, cov_weight=0.4, reg_on_predictions=True, steps_factor=4
+    ),
+}
+ALL_VARIANTS = {**VARIANTS, **SWEEP}
 
 
 class VariantJEPA(SequenceJEPA):
@@ -141,7 +166,11 @@ def train_variant(
     sequences: FloatArray, variant: Variant, *, n_steps: int, seed: int
 ) -> tuple[VariantJEPA, list[float]]:
     """As :func:`weather_world_model.jepa.train_jepa`, with the variant's loss."""
-    cfg = JEPAConfig(input_dim=sequences.shape[2], noise_dim=NOISE_DIM if variant.stochastic else 0)
+    cfg = JEPAConfig(
+        input_dim=sequences.shape[2],
+        latent_dim=variant.latent_dim,
+        noise_dim=NOISE_DIM if variant.stochastic else 0,
+    )
     rng = seed_everything(seed)
     data = torch.as_tensor(sequences, dtype=torch.float32)
     k = variant.k
@@ -193,7 +222,9 @@ def measure(
     mean, std = float(train.mean()), float(train.std())
     standardised = (train - mean) / std
     t0 = time.perf_counter()
-    model, stds = train_variant(standardised, variant, n_steps=profile.train_steps, seed=seed)
+    model, stds = train_variant(
+        standardised, variant, n_steps=profile.train_steps * variant.steps_factor, seed=seed
+    )
     out: dict[str, Any] = {
         "seed": seed,
         "data_sha256": array_sha256(standardised),
@@ -249,7 +280,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, default=Path("results/exploratory"))
     parser.add_argument("--profile", choices=("full", "smoke"), default="full")
     parser.add_argument("--variants", nargs="*", default=list(VARIANTS))
+    parser.add_argument("--sweep", action="store_true", help="run the SWEEP variants")
     args = parser.parse_args(argv)
+    if args.sweep:
+        args.variants = list(SWEEP)
     profile = PROFILES[args.profile]
     t0 = time.perf_counter()
     references = {}
@@ -260,7 +294,9 @@ def main(argv: list[str] | None = None) -> None:
         )
     print("reference Lyapunov", references, flush=True)
     runs = {
-        name: [measure(name, VARIANTS[name], args.profile, s, references[s]) for s in profile.seeds]
+        name: [
+            measure(name, ALL_VARIANTS[name], args.profile, s, references[s]) for s in profile.seeds
+        ]
         for name in args.variants
     }
     summary = {
@@ -278,7 +314,7 @@ def main(argv: list[str] | None = None) -> None:
         "profile": args.profile,
         "seeds": list(profile.seeds),
         "reference_lyapunov": references,
-        "variants": {n: VARIANTS[n].__dict__ for n in args.variants},
+        "variants": {n: ALL_VARIANTS[n].__dict__ for n in args.variants},
         "noise_dim": NOISE_DIM,
         "epsilon": 1e-3,
         "summary": summary,
@@ -286,7 +322,9 @@ def main(argv: list[str] | None = None) -> None:
         "wall_seconds": time.perf_counter() - t0,
     }
     args.out.mkdir(parents=True, exist_ok=True)
-    suffix = "" if args.profile == "full" else f"-{args.profile}"
+    suffix = ("-sweep" if args.sweep else "") + (
+        "" if args.profile == "full" else f"-{args.profile}"
+    )
     path = args.out / f"contraction-lorenz{suffix}.json"
     path.write_text(json.dumps(record, indent=2, default=str) + "\n")
     print(json.dumps(summary, indent=1))
