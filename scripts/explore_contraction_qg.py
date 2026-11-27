@@ -29,7 +29,10 @@ VARIANTS: dict[str, dict[str, float | int]] = {
     "k1_reg10": {"var_weight": 10.0, "cov_weight": 0.4, "latent_dim": 32},
     "k1_reg100": {"var_weight": 100.0, "cov_weight": 4.0, "latent_dim": 32},
     "k1_reg100_dim64": {"var_weight": 100.0, "cov_weight": 4.0, "latent_dim": 64},
+    "k1_reg10_dim128": {"var_weight": 10.0, "cov_weight": 0.4, "latent_dim": 128},
+    "k1_reg10_dim256": {"var_weight": 10.0, "cov_weight": 0.4, "latent_dim": 256},
 }
+LATENT_SWEEP = ("k1_reg10_dim128", "k1_reg10_dim256")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -37,7 +40,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, default=Path("results/exploratory"))
     parser.add_argument("--profile", choices=sorted(PROFILES), default="full")
     parser.add_argument("--variants", nargs="*", default=list(VARIANTS))
+    parser.add_argument("--latent-sweep", action="store_true", help="run LATENT_SWEEP only")
     args = parser.parse_args(argv)
+    if args.latent_sweep:
+        args.variants = list(LATENT_SWEEP)
     t0 = time.perf_counter()
     profile = PROFILES[args.profile]
     data = simulate(profile)
@@ -78,7 +84,9 @@ def main(argv: list[str] | None = None) -> None:
         "wall_seconds": time.perf_counter() - t0,
     }
     args.out.mkdir(parents=True, exist_ok=True)
-    suffix = "" if args.profile == "full" else f"-{args.profile}"
+    suffix = ("-latent" if args.latent_sweep else "") + (
+        "" if args.profile == "full" else f"-{args.profile}"
+    )
     path = args.out / f"contraction-qg{suffix}.json"
     path.write_text(json.dumps(record, indent=2, default=str) + "\n")
     print(f"wrote {path} in {time.perf_counter() - t0:.0f}s")
