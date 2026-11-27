@@ -322,3 +322,22 @@ def test_stochastic_predictor_keeps_bimodal_spread() -> None:
     # The deterministic model returns one point between the two futures (any such point
     # minimises the L1 error), so it has no spread at all.
     assert offsets["det"] < 0.8, offsets
+
+
+def test_conv_norm_none_keeps_field_amplitude() -> None:
+    # GroupNorm rescales each sample: doubling the field barely moves the latent.
+    # Without normalisation the latent moves with the amplitude.
+    torch.manual_seed(0)
+    x = torch.randn(4, 2, 16, 16)
+    shifts = {}
+    for norm in ("group", "none"):
+        torch.manual_seed(1)
+        cfg = JEPAConfig(
+            encoder="conv", input_shape=(2, 16, 16), conv_channels=(8, 16), conv_norm=norm
+        )
+        model = SequenceJEPA(cfg)
+        has_norm = any(isinstance(m, torch.nn.GroupNorm) for m in model.encoder.modules())
+        assert has_norm == (norm == "group")
+        z1, z2 = model.encode(x), model.encode(2.0 * x)
+        shifts[norm] = float((z2 - z1).norm() / z1.norm())
+    assert shifts["none"] > 5 * shifts["group"]

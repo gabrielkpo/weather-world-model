@@ -237,3 +237,21 @@ Not a protocol result. Record: [`results/exploratory/arrow-probe-qg.json`](../re
 - **The probe reads the direction of wave propagation, not irreversibility.** Keeping more components or longer clips lifts it from 90 % to 100 % against plain reversal, but it is at chance (43 to 55 % across the 16 settings of the record) once the reversed clip is mirrored in x (with v changing sign), which keeps the direction in which waves travel. The W-C numbers above therefore say that the latents keep the propagation direction, and nothing about irreversibility.
 - **The first run's 76.5 % ceiling is not explained.** With the protocol's sizes (56 training runs, 100 snapshots, 132 test clips) this analysis gives 86.9 % on true fields. The difference with the first run is to be traced (protocol amendment 4).
 - A diagnostic aimed at true irreversibility is to be defined in a later amendment.
+
+### Exploratory: why energies are not readable on the stationary flow
+
+Not a protocol result. Record: [`results/exploratory/energy-readout-qg.json`](../results/exploratory/energy-readout-qg.json) (code commit `67529ff`, stationary data of the full profile, W-P ridge probes, test R²). Reproduce with `uv run python scripts/explore_energy_readout.py --out results/exploratory`.
+
+| Features given to the probe | Kinetic energy | Enstrophy | Jet speed |
+|---|---|---|---|
+| Mean of squares of the fields, per channel (no model) | 0.99 | 0.95 | 0.40 |
+| First 32 PCA components of the fields (no model) | −0.15 | −0.09 | −0.18 |
+| Encoder with GroupNorm, random weights (2 seeds) | −0.03 to −0.02 | −0.05 to 0.00 | 0.04 to 0.11 |
+| Encoder with GroupNorm, one-step JEPA (2 seeds) | −0.03 to 0.05 | −0.01 to 0.08 | 0.24 to 0.32 |
+| Encoder without normalisation, random weights (2 seeds) | 0.70 to 0.83 | 0.72 to 0.80 | 0.23 to 0.24 |
+| Encoder without normalisation, one-step JEPA (2 seeds) | 0.20 to 0.46 | 0.28 to 0.49 | 0.12 to 0.22 |
+
+- **The GroupNorm layers erase the field amplitude.** With them, even a random encoder gives R² near zero for energy and enstrophy; without them, the same random encoder reads both at 0.70 to 0.83. Energy is a quadratic quantity: a linear probe on the fields (PCA) cannot read it, while a nonlinear encoder that keeps the amplitude can.
+- **JEPA training then discards part of what remains.** Without normalisation, the trained encoders read energy worse than the untrained ones (0.20 to 0.46 against 0.70 to 0.83), on both seeds, without collapse (latent std 0.90 to 0.94). Predicting the next latent does not reward keeping the overall amplitude of a stationary flow.
+- **Jet speed is the one quantity that training improves** with GroupNorm (0.24 to 0.32 against 0.04 to 0.11 at random).
+- Two seeds and one training length; any change to the models of the protocol goes through an amendment first.
