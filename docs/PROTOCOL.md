@@ -179,3 +179,13 @@ Changes:
 - Spin-up of 12 000 steps (60 time units) for every QG dataset, including the twin-divergence ground truth and the exploratory analysis.
 - A stationarity check stored in every QG run record and required to pass before any hypothesis is evaluated: over the training runs, the mean kinetic energy of the last third of the recorded snapshots differs from that of the first third by less than 10 %. A long-run energy record of the simulator (two seeds, 300 time units) is versioned with the rerun.
 - Step 2 is rerun in full on the new data, with the hypotheses and criteria of amendments 2 and 3 unchanged, and with the mirrored control of amendment 4 on W-C.
+
+### 6. 2026-11-27, the encoder's normalisation erased the quantities that W-P reads
+
+**Finding.** On the stationary flow (amendment 5), energies and enstrophy were not linearly readable from the latents of any model, including the random-weight control. An exploratory analysis (`scripts/explore_energy_readout.py`, record `results/exploratory/energy-readout-qg.json`) showed that the GroupNorm layers of the convolutional encoder rescale every sample and remove the overall amplitude of the field: kinetic energy is read at R² −0.03 to −0.02 by a random encoder with GroupNorm and at 0.70 to 0.83 by the same encoder without it. With this architecture, W-P could not separate learning from not learning for the amplitude-based quantities.
+
+**Changes.**
+
+- Step 2 is rerun with the convolutional encoder without normalisation (`conv_norm="none"`) for every model (one-step, 8-step, stochastic) and for the random-weight control, with the data, hypotheses and criteria of amendments 2, 3 and 5 unchanged and the mirrored control of amendment 4.
+- The rerun of amendment 5 (encoder with GroupNorm) is kept and reported next to it, so that both architectures are compared on the same stationary data.
+- V-JEPA 2 (hypothesis W-V) is compared with the small JEPA without normalisation.
